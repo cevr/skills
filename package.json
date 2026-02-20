@@ -1,0 +1,63 @@
+{
+  "name": "@cvr/skills",
+  "version": "0.1.0",
+  "description": "CLI to fetch and manage AI agent skills from the Vercel skills ecosystem",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/cevr/skills.git"
+  },
+  "bin": {
+    "skills": "./bin/skills"
+  },
+  "files": [
+    "bin",
+    "src",
+    "tsconfig.json"
+  ],
+  "type": "module",
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "dev": "bun run src/main.ts",
+    "build": "bun run compile && bun run install:global",
+    "compile": "bun build src/main.ts --compile --no-compile-autoload-dotenv --no-compile-autoload-bunfig --outfile bin/skills",
+    "postinstall": "bun run compile",
+    "install:global": "ln -sf $(pwd)/bin/skills $(bun pm bin -g)/skills",
+    "uninstall:global": "rm -f $(bun pm bin -g)/skills",
+    "typecheck": "tsc --noEmit",
+    "lint": "oxlint",
+    "lint:fix": "oxlint --fix",
+    "fmt": "oxfmt",
+    "fmt:check": "oxfmt --check",
+    "gate": "concurrently -n build,type,lint,fmt,test -c cyan,blue,yellow,magenta,green \"bun run build\" \"bun run typecheck\" \"bun run lint:fix\" \"bun run fmt\" \"bun run test\"",
+    "test": "bun test",
+    "test:watch": "bun test --watch",
+    "prepare": "effect-language-service patch && lefthook install",
+    "version": "changeset version",
+    "release": "changeset publish"
+  },
+  "dependencies": {
+    "@effect/cli": "^0.73.0",
+    "@effect/platform": "^0.94.1",
+    "@effect/platform-bun": "^0.87.0",
+    "effect": "^3.19.14"
+  },
+  "devDependencies": {
+    "@changesets/changelog-github": "^0.5.0",
+    "@changesets/cli": "^2.27.0",
+    "@effect/language-service": "^0.65.0",
+    "@effect/platform-node": "^0.104.0",
+    "@types/bun": "^1.2.4",
+    "@types/node": "^22.13.5",
+    "concurrently": "^9.2.1",
+    "effect-bun-test": "^0.2.0",
+    "lefthook": "^2.0.15",
+    "oxfmt": "^0.26.0",
+    "oxlint": "^1.41.0",
+    "typescript": "^5.7.3"
+  },
+  "engines": {
+    "bun": ">=1.0.0"
+  }
+}

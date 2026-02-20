@@ -1,0 +1,74 @@
+import { describe, expect, test } from "effect-bun-test/v3"
+import { parseSource } from "../../src/lib/source.js"
+
+describe("parseSource", () => {
+  test("owner/repo → GitHubRepo", () => {
+    const result = parseSource("vercel-labs/agent-skills")
+    expect(result).toEqual({
+      _tag: "GitHubRepo",
+      owner: "vercel-labs",
+      repo: "agent-skills",
+      ref: undefined,
+      subpath: undefined,
+    })
+  })
+
+  test("owner/repo#ref → GitHubRepo with ref", () => {
+    const result = parseSource("vercel-labs/agent-skills#v2")
+    expect(result).toEqual({
+      _tag: "GitHubRepo",
+      owner: "vercel-labs",
+      repo: "agent-skills",
+      ref: "v2",
+      subpath: undefined,
+    })
+  })
+
+  test("owner/repo@skill → GitHubRepoWithSkill", () => {
+    const result = parseSource("vercel-labs/agent-skills@vercel-react-best-practices")
+    expect(result).toEqual({
+      _tag: "GitHubRepoWithSkill",
+      owner: "vercel-labs",
+      repo: "agent-skills",
+      skillFilter: "vercel-react-best-practices",
+    })
+  })
+
+  test("GitHub URL → GitHubRepo", () => {
+    const result = parseSource("https://github.com/vercel-labs/agent-skills")
+    expect(result).toEqual({
+      _tag: "GitHubRepo",
+      owner: "vercel-labs",
+      repo: "agent-skills",
+    })
+  })
+
+  test("GitHub URL with tree/ref/path → GitHubRepo", () => {
+    const result = parseSource(
+      "https://github.com/vercel-labs/agent-skills/tree/main/skills/react-best-practices",
+    )
+    expect(result).toEqual({
+      _tag: "GitHubRepo",
+      owner: "vercel-labs",
+      repo: "agent-skills",
+      ref: "main",
+      subpath: "skills/react-best-practices",
+    })
+  })
+
+  test("plain text → SearchQuery", () => {
+    const result = parseSource("react best practices")
+    expect(result).toEqual({
+      _tag: "SearchQuery",
+      query: "react best practices",
+    })
+  })
+
+  test("single word → SearchQuery", () => {
+    const result = parseSource("testing")
+    expect(result).toEqual({
+      _tag: "SearchQuery",
+      query: "testing",
+    })
+  })
+})
