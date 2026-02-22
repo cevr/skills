@@ -130,6 +130,7 @@ const addFromSearch = (
 
 export const runAdd = (
   sourceInput: string,
+  skillFilter?: string | undefined,
 ): Effect.Effect<
   void,
   FetchError | SearchError | SkillNotFoundError,
@@ -137,6 +138,17 @@ export const runAdd = (
 > =>
   Effect.gen(function* () {
     const parsed = parseSource(sourceInput)
+
+    // --skill flag overrides: convert GitHubRepo to GitHubRepoWithSkill
+    if (skillFilter && parsed._tag === "GitHubRepo") {
+      yield* addFromRepoWithSkill({
+        _tag: "GitHubRepoWithSkill",
+        owner: parsed.owner,
+        repo: parsed.repo,
+        skillFilter,
+      })
+      return
+    }
 
     switch (parsed._tag) {
       case "GitHubRepo":

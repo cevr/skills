@@ -1,5 +1,5 @@
-import { Args, Command } from "@effect/cli"
-import { Console, Effect } from "effect"
+import { Args, Command, Options } from "@effect/cli"
+import { Console, Effect, Option } from "effect"
 import { SkillStore } from "./services/SkillStore.js"
 import { runSearch } from "./commands/search.js"
 import { runAdd } from "./commands/add.js"
@@ -68,8 +68,17 @@ const sourceArg = Args.text({ name: "source" })
 const queryArg = Args.text({ name: "query" })
 const nameArg = Args.text({ name: "name" })
 
-const addCommand = Command.make("add", { source: sourceArg }, ({ source }) =>
-  runAdd(source).pipe(Effect.catchAll(handleError)),
+const skillOption = Options.text("skill").pipe(
+  Options.withAlias("s"),
+  Options.withDescription("Install a specific skill from a multi-skill repo"),
+  Options.optional,
+)
+
+const addCommand = Command.make(
+  "add",
+  { source: sourceArg, skill: skillOption },
+  ({ source, skill }) =>
+    runAdd(source, Option.getOrUndefined(skill)).pipe(Effect.catchAll(handleError)),
 ).pipe(Command.withDescription("Install a skill from GitHub or search query"))
 
 const searchCommand = Command.make("search", { query: queryArg }, ({ query }) =>
