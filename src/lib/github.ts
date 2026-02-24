@@ -79,7 +79,8 @@ export interface SkillEntry {
 
 /**
  * Discover all skills in a repo by listing `skills/` dir and filtering for subdirectories
- * that contain a SKILL.md.
+ * that contain a SKILL.md. Falls back to checking for SKILL.md at the repo root for
+ * single-skill repos.
  */
 export const discoverSkills = (
   owner: string,
@@ -87,7 +88,9 @@ export const discoverSkills = (
   ref?: string,
 ): Effect.Effect<ReadonlyArray<SkillEntry>, FetchError, HttpClient.HttpClient> =>
   Effect.gen(function* () {
-    const entries = yield* listContents(owner, repo, "skills", ref)
+    const entries = yield* listContents(owner, repo, "skills", ref).pipe(
+      Effect.catchAll(() => Effect.succeed([] as ReadonlyArray<GitHubContentEntry>)),
+    )
     const dirs = entries.filter((e) => e.type === "dir")
 
     const skills: Array<SkillEntry> = []
@@ -99,6 +102,19 @@ export const discoverSkills = (
         skills.push({
           dirName: dir.name,
           skillMdPath: `${dir.path}/SKILL.md`,
+        })
+      }
+    }
+
+    // Fallback: check for SKILL.md at repo root (single-skill repos)
+    if (skills.length === 0) {
+      const rootEntries = yield* listContents(owner, repo, "", ref).pipe(
+        Effect.catchAll(() => Effect.succeed([] as ReadonlyArray<GitHubContentEntry>)),
+      )
+      if (rootEntries.some((e) => e.name === "SKILL.md")) {
+        skills.push({
+          dirName: repo,
+          skillMdPath: "SKILL.md",
         })
       }
     }
