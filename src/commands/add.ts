@@ -73,26 +73,43 @@ const addFromRepoWithSkill = (
     const { owner, repo, skillFilter } = source
     const sourceStr = `${owner}/${repo}@${skillFilter}`
 
-    const skills = yield* discoverSkills(owner, repo)
+    // Try direct path first — avoids full discovery scan on large repos
+    const directPath = `skills/${skillFilter}/SKILL.md`
+    const direct = yield* fetchRaw(owner, repo, directPath).pipe(
+      Effect.option,
+    )
 
-    // Match by directory name
-    const byDir = skills.find((s) => s.dirName === skillFilter)
-    if (byDir) {
-      yield* installFromSkillMd(owner, repo, byDir.skillMdPath, undefined, sourceStr)
+    if (direct._tag === "Some") {
+      const fm = yield* parseFrontmatter(direct.value).pipe(
+        Effect.catchAll(() => Effect.succeed(null)),
+      )
+      const name = fm ? toKebab(fm.name) : skillFilter
+      const store = yield* SkillStore
+      const lock = yield* SkillLock
+      yield* store.install(name, direct.value)
+      yield* lock.add(name, sourceStr, directPath).pipe(Effect.catchAll(() => Effect.void))
+      yield* Console.log(`  Installed: ${name}`)
       return
     }
 
-    // Match by frontmatter name
+    // Try root SKILL.md (single-skill repos)
+    const rootContent = yield* fetchRaw(owner, repo, "SKILL.md").pipe(
+      Effect.option,
+    )
+
+    if (rootContent._tag === "Some") {
+      yield* installFromSkillMd(owner, repo, "SKILL.md", undefined, sourceStr)
+      return
+    }
+
+    // Fallback: full discovery for frontmatter name matching
+    const skills = yield* discoverSkills(owner, repo)
+
     for (const skill of skills) {
       const content = yield* fetchRaw(owner, repo, skill.skillMdPath)
       const fm = yield* parseFrontmatter(content).pipe(Effect.catchAll(() => Effect.succeed(null)))
       if (fm && toKebab(fm.name) === toKebab(skillFilter)) {
-        const store = yield* SkillStore
-        const lock = yield* SkillLock
-        const name = toKebab(fm.name)
-        yield* store.install(name, content)
-        yield* lock.add(name, sourceStr, skill.skillMdPath).pipe(Effect.catchAll(() => Effect.void))
-        yield* Console.log(`  Installed: ${name}`)
+        yield* installFromSkillMd(owner, repo, skill.skillMdPath, undefined, sourceStr)
         return
       }
     }
