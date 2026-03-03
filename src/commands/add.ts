@@ -1,7 +1,7 @@
 import { Console, Effect } from "effect"
 import { HttpClient } from "@effect/platform"
 import { parseSource, type GitHubRepo, type GitHubRepoWithSkill } from "../lib/source.js"
-import { discoverSkills, fetchRaw } from "../lib/github.js"
+import { discoverSkills, fetchRaw, fetchSkillDir } from "../lib/github.js"
 import { parseFrontmatter } from "../lib/frontmatter.js"
 import { search } from "../lib/search-api.js"
 import { toKebab } from "../lib/util.js"
@@ -9,28 +9,38 @@ import { SkillStore } from "../services/SkillStore.js"
 import { SkillLock } from "../services/SkillLock.js"
 import { FetchError, SearchError, SkillNotFoundError } from "../lib/errors.js"
 
-const installFromSkillMd = (
+/**
+ * Install a full skill directory (SKILL.md + references/ etc.) from a repo.
+ */
+const installSkillDir = (
   owner: string,
   repo: string,
-  skillMdPath: string,
+  skillDir: string,
   ref: string | undefined,
   sourceStr: string,
 ): Effect.Effect<string, FetchError, SkillStore | SkillLock | HttpClient.HttpClient> =>
   Effect.gen(function* () {
     const store = yield* SkillStore
     const lock = yield* SkillLock
-    const content = yield* fetchRaw(owner, repo, skillMdPath, ref ?? "main")
-    const frontmatter = yield* parseFrontmatter(content).pipe(
-      Effect.catchAll(() => Effect.succeed(null)),
-    )
+    const resolvedRef = ref ?? "main"
 
-    const name = frontmatter
-      ? toKebab(frontmatter.name)
-      : (skillMdPath.split("/").at(-2) ?? "unknown")
+    const files = yield* fetchSkillDir(owner, repo, skillDir, resolvedRef)
 
-    yield* store.install(name, content)
+    const skillMd = files.find((f) => f.path === "SKILL.md")
+    const frontmatter = skillMd
+      ? yield* parseFrontmatter(skillMd.content).pipe(Effect.catchAll(() => Effect.succeed(null)))
+      : null
+
+    const fallbackName = skillDir
+      ? (skillDir.split("/").at(-1) ?? "unknown")
+      : repo
+    const name = frontmatter ? toKebab(frontmatter.name) : fallbackName
+
+    const skillMdPath = skillDir ? `${skillDir}/SKILL.md` : "SKILL.md"
+
+    yield* store.installDir(name, files)
     yield* lock.add(name, sourceStr, skillMdPath).pipe(Effect.catchAll(() => Effect.void))
-    yield* Console.log(`  Installed: ${name}`)
+    yield* Console.log(`  Installed: ${name} (${files.length} file${files.length === 1 ? "" : "s"})`)
 
     return name
   })
@@ -43,8 +53,10 @@ const addFromRepo = (
     const sourceStr = `${owner}/${repo}${ref ? `#${ref}` : ""}`
 
     if (subpath) {
-      const skillMdPath = subpath.endsWith("SKILL.md") ? subpath : `${subpath}/SKILL.md`
-      yield* installFromSkillMd(owner, repo, skillMdPath, ref, sourceStr)
+      const skillDir = subpath.endsWith("SKILL.md")
+        ? subpath.split("/").slice(0, -1).join("/")
+        : subpath
+      yield* installSkillDir(owner, repo, skillDir, ref, sourceStr)
       return
     }
 
@@ -58,9 +70,12 @@ const addFromRepo = (
 
     yield* Console.log(`Found ${skills.length} skill(s):\n`)
     for (const skill of skills) {
-      yield* installFromSkillMd(owner, repo, skill.skillMdPath, ref, sourceStr)
+      yield* installSkillDir(owner, repo, skill.skillDir, ref, sourceStr)
     }
   }).pipe(Effect.withSpan("command.add.fromRepo"))
+
+/** Candidate directories to try for direct path resolution */
+const SKILL_DIR_PREFIXES = ["skills", "skill"] as const
 
 const addFromRepoWithSkill = (
   source: GitHubRepoWithSkill,
@@ -73,32 +88,22 @@ const addFromRepoWithSkill = (
     const { owner, repo, skillFilter } = source
     const sourceStr = `${owner}/${repo}@${skillFilter}`
 
-    // Try direct path first — avoids full discovery scan on large repos
-    const directPath = `skills/${skillFilter}/SKILL.md`
-    const direct = yield* fetchRaw(owner, repo, directPath).pipe(
-      Effect.option,
-    )
+    // Try direct paths first — avoids full discovery scan on large repos
+    for (const prefix of SKILL_DIR_PREFIXES) {
+      const directPath = `${prefix}/${skillFilter}/SKILL.md`
+      const direct = yield* fetchRaw(owner, repo, directPath).pipe(Effect.option)
 
-    if (direct._tag === "Some") {
-      const fm = yield* parseFrontmatter(direct.value).pipe(
-        Effect.catchAll(() => Effect.succeed(null)),
-      )
-      const name = fm ? toKebab(fm.name) : skillFilter
-      const store = yield* SkillStore
-      const lock = yield* SkillLock
-      yield* store.install(name, direct.value)
-      yield* lock.add(name, sourceStr, directPath).pipe(Effect.catchAll(() => Effect.void))
-      yield* Console.log(`  Installed: ${name}`)
-      return
+      if (direct._tag === "Some") {
+        yield* installSkillDir(owner, repo, `${prefix}/${skillFilter}`, undefined, sourceStr)
+        return
+      }
     }
 
     // Try root SKILL.md (single-skill repos)
-    const rootContent = yield* fetchRaw(owner, repo, "SKILL.md").pipe(
-      Effect.option,
-    )
+    const rootContent = yield* fetchRaw(owner, repo, "SKILL.md").pipe(Effect.option)
 
     if (rootContent._tag === "Some") {
-      yield* installFromSkillMd(owner, repo, "SKILL.md", undefined, sourceStr)
+      yield* installSkillDir(owner, repo, "", undefined, sourceStr)
       return
     }
 
@@ -109,7 +114,7 @@ const addFromRepoWithSkill = (
       const content = yield* fetchRaw(owner, repo, skill.skillMdPath)
       const fm = yield* parseFrontmatter(content).pipe(Effect.catchAll(() => Effect.succeed(null)))
       if (fm && toKebab(fm.name) === toKebab(skillFilter)) {
-        yield* installFromSkillMd(owner, repo, skill.skillMdPath, undefined, sourceStr)
+        yield* installSkillDir(owner, repo, skill.skillDir, undefined, sourceStr)
         return
       }
     }
