@@ -1,74 +1,87 @@
 import { Console, Effect } from "effect"
-import { HttpClient } from "@effect/platform"
 import { SkillStore } from "../services/SkillStore.js"
+import { fetchSkillDir } from "../services/GitHub.js"
 import { SkillLock, type LockEntry } from "../services/SkillLock.js"
-import { fetchRaw } from "../lib/github.js"
-import { parseFrontmatter } from "../lib/frontmatter.js"
-import { toKebab } from "../lib/util.js"
-import type { LockFileError } from "../lib/errors.js"
+import { parseSource } from "../lib/source.js"
 
-const updateSkill = (
+const skillDirFromPath = (skillPath: string) =>
+  skillPath === "SKILL.md" ? "" : skillPath.split("/").slice(0, -1).join("/")
+
+const resolveRepoSource = (source: string) => {
+  const parsed = parseSource(source)
+
+  switch (parsed._tag) {
+    case "GitHubRepo":
+      return {
+        owner: parsed.owner,
+        repo: parsed.repo,
+        ref: parsed.ref,
+      }
+    case "GitHubRepoWithSkill":
+      return {
+        owner: parsed.owner,
+        repo: parsed.repo,
+        ref: undefined,
+      }
+    case "SearchQuery":
+      return null
+  }
+}
+
+const updateSkill = Effect.fn("command.update.updateSkill")(function* (
   name: string,
   entry: LockEntry,
-): Effect.Effect<boolean, never, SkillStore | SkillLock | HttpClient.HttpClient> =>
-  Effect.gen(function* () {
-    const store = yield* SkillStore
-    const lock = yield* SkillLock
+) {
+  const store = yield* SkillStore
+  const lock = yield* SkillLock
 
-    const parts = entry.source.replace(/#.*$/, "").split("/")
-    if (parts.length < 2) {
-      yield* Console.error(`  Skipping ${name}: invalid source "${entry.source}"`)
-      return false
-    }
-    const [owner, repo] = parts as [string, string]
-    const ref = entry.source.includes("#") ? entry.source.split("#")[1] : undefined
+  const source = resolveRepoSource(entry.source)
+  if (!source) {
+    yield* Console.error(`  Skipping ${name}: invalid source "${entry.source}"`)
+    return false
+  }
 
-    const content = yield* fetchRaw(owner, repo, entry.skillPath, ref ?? "main").pipe(
-      Effect.catchTag("FetchError", (e) =>
-        Console.error(`  Failed to update ${name}: ${e.message}`).pipe(
-          Effect.andThen(Effect.succeed(null)),
-        ),
+  const files = yield* fetchSkillDir(
+    source.owner,
+    source.repo,
+    skillDirFromPath(entry.skillPath),
+    source.ref ?? "main",
+  ).pipe(
+    Effect.catchTag("FetchError", (error) =>
+      Console.error(`  Failed to update ${name}: ${error.message}`).pipe(
+        Effect.andThen(Effect.succeed(null)),
       ),
-    )
+    ),
+  )
 
-    if (content === null) return false
+  if (files === null) return false
 
-    const frontmatter = yield* parseFrontmatter(content).pipe(
-      Effect.catchAll(() => Effect.succeed(null)),
-    )
-    const skillName = frontmatter ? toKebab(frontmatter.name) : name
+  yield* store.syncDir(name, files)
+  yield* lock.update(name).pipe(Effect.catchAll(() => Effect.void))
 
-    yield* store.install(skillName, content)
-    yield* lock.update(name).pipe(Effect.catchAll(() => Effect.void))
+  return true
+})
 
-    return true
-  })
+export const runUpdate = Effect.fn("command.update")(function* () {
+  const lock = yield* SkillLock
+  const lockFile = yield* lock.read
 
-export const runUpdate = (): Effect.Effect<
-  void,
-  LockFileError,
-  SkillStore | SkillLock | HttpClient.HttpClient
-> =>
-  Effect.gen(function* () {
-    const lock = yield* SkillLock
-    const lockFile = yield* lock.read
+  const entries = Object.entries(lockFile.skills)
+  if (entries.length === 0) {
+    yield* Console.log("No skills to update. Lock file is empty.")
+    return
+  }
 
-    const entries = Object.entries(lockFile.skills)
-    if (entries.length === 0) {
-      yield* Console.log("No skills to update. Lock file is empty.")
-      return
-    }
+  yield* Console.log(`Updating ${entries.length} skill(s)...\n`)
 
-    yield* Console.log(`Updating ${entries.length} skill(s)...\n`)
+  let updated = 0
+  for (const [name, entry] of entries) {
+    const success = yield* updateSkill(name, entry)
+    if (!success) continue
 
-    let updated = 0
-    for (const [name, entry] of entries) {
-      const success = yield* updateSkill(name, entry)
-      if (success) {
-        yield* Console.log(`  Updated: ${name}`)
-        updated++
-      }
-    }
+    yield* Console.log(`  Updated: ${name}`)
+    updated++
+  }
 
-    yield* Console.log(`\n${updated}/${entries.length} skill(s) updated.`)
-  }).pipe(Effect.withSpan("command.update"))
+  yield* Console.log(`\n${updated}/${entries.length} skill(s) updated.`)
+})

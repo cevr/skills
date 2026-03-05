@@ -15,8 +15,8 @@ export class LockFile extends Schema.Class<LockFile>("LockFile")({
   skills: Schema.Record({ key: Schema.String, value: LockEntry }),
 }) {}
 
-const decodeLockFile = Schema.decodeUnknown(LockFile)
-const encodeLockFile = Schema.encodeUnknown(LockFile)
+const decodeLockFileJson = Schema.decodeUnknown(Schema.parseJson(LockFile))
+const encodeLockFileJson = Schema.encodeUnknown(Schema.parseJson(LockFile))
 
 export class SkillLock extends Context.Tag("@skills/SkillLock")<
   SkillLock,
@@ -48,8 +48,7 @@ export const SkillLockLive = Layer.effect(
         return new LockFile({ version: 1, skills: {} })
       }
       const raw = yield* fs.readFileString(lockPath)
-      const json = JSON.parse(raw) as unknown
-      return yield* decodeLockFile(json)
+      return yield* decodeLockFileJson(raw)
     }).pipe(
       Effect.mapError((cause) => new LockFileError({ cause })),
       Effect.withSpan("SkillLock.read"),
@@ -57,9 +56,9 @@ export const SkillLockLive = Layer.effect(
 
     const writeLock = (lock: LockFile): Effect.Effect<void, LockFileError> =>
       Effect.gen(function* () {
-        const encoded = yield* encodeLockFile(lock)
+        const encoded = yield* encodeLockFileJson(lock)
         yield* fs.makeDirectory(pathService.dirname(lockPath), { recursive: true })
-        yield* fs.writeFileString(lockPath, JSON.stringify(encoded, null, 2) + "\n")
+        yield* fs.writeFileString(lockPath, encoded + "\n")
       }).pipe(
         Effect.mapError((cause) => new LockFileError({ cause })),
         Effect.withSpan("SkillLock.write"),

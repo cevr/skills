@@ -1,4 +1,4 @@
-import { Context, Config, Effect, Layer } from "effect"
+import { Context, Config, Effect, Layer, Option } from "effect"
 import { FileSystem, Path } from "@effect/platform"
 import { SkillNotFoundError } from "../lib/errors.js"
 import { parseFrontmatter, type SkillFrontmatter } from "../lib/frontmatter.js"
@@ -20,11 +20,15 @@ export class SkillStore extends Context.Tag("@skills/SkillStore")<
       name: string,
       files: ReadonlyArray<{ path: string; content: string }>,
     ) => Effect.Effect<void>
+    readonly syncDir: (
+      name: string,
+      files: ReadonlyArray<{ path: string; content: string }>,
+    ) => Effect.Effect<void>
     readonly remove: (name: string) => Effect.Effect<void, SkillNotFoundError>
   }
 >() {}
 
-const SKILLS_DIR_CONFIG = Config.string("SKILLS_DIR").pipe(Config.withDefault(""))
+const skillsDirConfig = Config.option(Config.string("SKILLS_DIR"))
 
 const defaultSkillsDir = Config.string("HOME").pipe(
   Config.map((home) => `${home}/Developer/personal/dotfiles/skills`),
@@ -36,8 +40,8 @@ export const SkillStoreLive = Layer.effect(
     const fs = yield* FileSystem.FileSystem
     const pathService = yield* Path.Path
 
-    const configDir = yield* Effect.orDie(SKILLS_DIR_CONFIG)
-    const dir = configDir || (yield* Effect.orDie(defaultSkillsDir))
+    const configDir = yield* Effect.orDie(skillsDirConfig)
+    const dir = Option.isSome(configDir) ? configDir.value : yield* Effect.orDie(defaultSkillsDir)
 
     const list: Effect.Effect<ReadonlyArray<InstalledSkill>> = Effect.gen(function* () {
       const exists = yield* fs.exists(dir)
@@ -100,6 +104,16 @@ export const SkillStoreLive = Layer.effect(
         }
       }).pipe(Effect.orDie, Effect.withSpan("SkillStore.installDir", { attributes: { name } }))
 
+    const syncDir = (name: string, files: ReadonlyArray<{ path: string; content: string }>) =>
+      Effect.gen(function* () {
+        const skillDir = pathService.join(dir, name)
+        const exists = yield* fs.exists(skillDir).pipe(Effect.orDie)
+        if (exists) {
+          yield* fs.remove(skillDir, { recursive: true }).pipe(Effect.orDie)
+        }
+        yield* installDir(name, files)
+      }).pipe(Effect.orDie, Effect.withSpan("SkillStore.syncDir", { attributes: { name } }))
+
     const remove = (name: string) =>
       Effect.gen(function* () {
         const skillDir = pathService.join(dir, name)
@@ -108,6 +122,6 @@ export const SkillStoreLive = Layer.effect(
         yield* fs.remove(skillDir, { recursive: true }).pipe(Effect.orDie)
       }).pipe(Effect.withSpan("SkillStore.remove", { attributes: { name } }))
 
-    return { dir, list, read, install, installDir, remove }
+    return { dir, list, read, install, installDir, syncDir, remove }
   }),
 )

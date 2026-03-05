@@ -2,7 +2,7 @@ import { describe, expect, it } from "effect-bun-test/v3"
 import { ConfigProvider, Effect, Layer } from "effect"
 import { NodeContext } from "@effect/platform-node"
 import { SkillStore, SkillStoreLive } from "../../src/services/SkillStore.js"
-import { mkdtempSync } from "node:fs"
+import { existsSync, mkdtempSync, readFileSync } from "node:fs"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
 
@@ -66,5 +66,42 @@ description: A test skill
         .pipe(Effect.catchTag("SkillNotFoundError", () => Effect.succeed("not-found")))
       expect(result).toBe("not-found")
     }).pipe(Effect.provide(makeTestLayer(dir)))
+  })
+
+  it.live("syncDir removes stale files before writing new ones", () => {
+    const dir = makeTempDir()
+    return Effect.gen(function* () {
+      const store = yield* SkillStore
+
+      yield* store.installDir("test-skill", [
+        {
+          path: "SKILL.md",
+          content: "---\nname: test-skill\ndescription: First\n---\n",
+        },
+        {
+          path: "references/old.md",
+          content: "old",
+        },
+      ])
+
+      yield* store.syncDir("test-skill", [
+        {
+          path: "SKILL.md",
+          content: "---\nname: test-skill\ndescription: Second\n---\n",
+        },
+        {
+          path: "references/new.md",
+          content: "new",
+        },
+      ])
+    }).pipe(
+      Effect.provide(makeTestLayer(dir)),
+      Effect.tap(() =>
+        Effect.sync(() => {
+          expect(existsSync(join(dir, "test-skill", "references", "old.md"))).toBe(false)
+          expect(readFileSync(join(dir, "test-skill", "references", "new.md"), "utf8")).toBe("new")
+        }),
+      ),
+    )
   })
 })
