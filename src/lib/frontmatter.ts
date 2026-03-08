@@ -1,4 +1,4 @@
-import { Effect, ParseResult, Schema } from "effect"
+import { Effect, Option, ParseResult, Schema } from "effect"
 
 export class SkillFrontmatter extends Schema.Class<SkillFrontmatter>("SkillFrontmatter")({
   name: Schema.String,
@@ -69,3 +69,11 @@ export const parseFrontmatter = (
 
   return decode(record)
 }
+
+export const tryParseFrontmatter = (
+  content: string,
+): Effect.Effect<Option.Option<SkillFrontmatter>> =>
+  parseFrontmatter(content).pipe(
+    Effect.map(Option.some),
+    Effect.catchAll(() => Effect.succeed(Option.none())),
+  )

@@ -1,4 +1,4 @@
-import { Context, Effect, Layer, Schema } from "effect"
+import { Context, Effect, Layer, Option, Schema } from "effect"
 import { FileSystem, Path } from "@effect/platform"
 import { LockFileError } from "../lib/errors.js"
 import { SkillStore } from "./SkillStore.js"
@@ -22,14 +22,18 @@ export class SkillLock extends Context.Tag("@skills/SkillLock")<
   SkillLock,
   {
     readonly read: Effect.Effect<LockFile, LockFileError>
-    readonly get: (name: string) => Effect.Effect<LockEntry | null>
+    readonly get: (name: string) => Effect.Effect<Option.Option<LockEntry>>
     readonly add: (
       name: string,
       source: string,
       skillPath: string,
     ) => Effect.Effect<void, LockFileError>
+    readonly addMany: (
+      entries: ReadonlyArray<{ name: string; source: string; skillPath: string }>,
+    ) => Effect.Effect<void, LockFileError>
     readonly remove: (name: string) => Effect.Effect<void, LockFileError>
     readonly update: (name: string) => Effect.Effect<void, LockFileError>
+    readonly updateMany: (names: ReadonlyArray<string>) => Effect.Effect<void, LockFileError>
   }
 >() {}
 
@@ -65,12 +69,11 @@ export const SkillLockLive = Layer.effect(
       )
 
     const get = (name: string) =>
-      Effect.gen(function* () {
-        const lock = yield* readLock.pipe(
-          Effect.catchAll(() => Effect.succeed(new LockFile({ version: 1, skills: {} }))),
-        )
-        return lock.skills[name] ?? null
-      }).pipe(Effect.withSpan("SkillLock.get", { attributes: { name } }))
+      readLock.pipe(
+        Effect.catchAll(() => Effect.succeed(new LockFile({ version: 1, skills: {} }))),
+        Effect.map((lock) => Option.fromNullable(lock.skills[name])),
+        Effect.withSpan("SkillLock.get", { attributes: { name } }),
+      )
 
     const add = (name: string, source: string, skillPath: string) =>
       Effect.gen(function* () {
@@ -88,6 +91,23 @@ export const SkillLockLive = Layer.effect(
         })
         yield* writeLock(updated)
       }).pipe(Effect.withSpan("SkillLock.add", { attributes: { name, source } }))
+
+    const addMany = (entries: ReadonlyArray<{ name: string; source: string; skillPath: string }>) =>
+      Effect.gen(function* () {
+        if (entries.length === 0) return
+        const lock = yield* readLock
+        const now = new Date().toISOString()
+        const newSkills = { ...lock.skills }
+        for (const { name, source, skillPath } of entries) {
+          newSkills[name] = new LockEntry({
+            source,
+            skillPath,
+            installedAt: now,
+            updatedAt: now,
+          })
+        }
+        yield* writeLock(new LockFile({ version: 1, skills: newSkills }))
+      }).pipe(Effect.withSpan("SkillLock.addMany"))
 
     const remove = (name: string) =>
       Effect.gen(function* () {
@@ -111,6 +131,21 @@ export const SkillLockLive = Layer.effect(
         yield* writeLock(updated)
       }).pipe(Effect.withSpan("SkillLock.update", { attributes: { name } }))
 
-    return { read: readLock, get, add, remove, update }
+    const updateMany = (names: ReadonlyArray<string>) =>
+      Effect.gen(function* () {
+        if (names.length === 0) return
+        const lock = yield* readLock
+        const now = new Date().toISOString()
+        const newSkills = { ...lock.skills }
+        for (const name of names) {
+          const entry = newSkills[name]
+          if (entry) {
+            newSkills[name] = new LockEntry({ ...entry, updatedAt: now })
+          }
+        }
+        yield* writeLock(new LockFile({ version: 1, skills: newSkills }))
+      }).pipe(Effect.withSpan("SkillLock.updateMany"))
+
+    return { read: readLock, get, add, addMany, remove, update, updateMany }
   }),
 )

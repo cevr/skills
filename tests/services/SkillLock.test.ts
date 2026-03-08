@@ -1,5 +1,5 @@
 import { describe, expect, it } from "effect-bun-test/v3"
-import { ConfigProvider, Effect, Layer } from "effect"
+import { ConfigProvider, Effect, Layer, Option } from "effect"
 import { NodeContext } from "@effect/platform-node"
 import { SkillStoreLive } from "../../src/services/SkillStore.js"
 import { SkillLock, SkillLockLive } from "../../src/services/SkillLock.js"
@@ -34,9 +34,10 @@ describe("SkillLock", () => {
       yield* lock.add("my-skill", "owner/repo", "skills/my-skill/SKILL.md")
 
       const entry = yield* lock.get("my-skill")
-      expect(entry).not.toBe(null)
-      expect(entry!.source).toBe("owner/repo")
-      expect(entry!.skillPath).toBe("skills/my-skill/SKILL.md")
+      expect(Option.isSome(entry)).toBe(true)
+      const value = Option.getOrThrow(entry)
+      expect(value.source).toBe("owner/repo")
+      expect(value.skillPath).toBe("skills/my-skill/SKILL.md")
     }).pipe(Effect.provide(makeTestLayer(dir)))
   })
 
@@ -48,7 +49,7 @@ describe("SkillLock", () => {
       yield* lock.remove("to-remove")
 
       const entry = yield* lock.get("to-remove")
-      expect(entry).toBe(null)
+      expect(Option.isNone(entry)).toBe(true)
     }).pipe(Effect.provide(makeTestLayer(dir)))
   })
 
@@ -60,10 +61,11 @@ describe("SkillLock", () => {
       yield* lock.update("test")
       const after = yield* lock.get("test")
 
-      expect(after).not.toBe(null)
-      expect(after!.source).toBe("owner/repo")
-      expect(after!.updatedAt).toBeTruthy()
-      expect(new Date(after!.updatedAt).toISOString()).toBe(after!.updatedAt)
+      expect(Option.isSome(after)).toBe(true)
+      const value = Option.getOrThrow(after)
+      expect(value.source).toBe("owner/repo")
+      expect(value.updatedAt).toBeTruthy()
+      expect(new Date(value.updatedAt).toISOString()).toBe(value.updatedAt)
     }).pipe(Effect.provide(makeTestLayer(dir)))
   })
 
@@ -72,7 +74,7 @@ describe("SkillLock", () => {
     return Effect.gen(function* () {
       const lock = yield* SkillLock
       const entry = yield* lock.get("nope")
-      expect(entry).toBe(null)
+      expect(Option.isNone(entry)).toBe(true)
     }).pipe(Effect.provide(makeTestLayer(dir)))
   })
 })

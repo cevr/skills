@@ -24,20 +24,22 @@ describe("SkillStore", () => {
     }).pipe(Effect.provide(makeTestLayer(dir)))
   })
 
-  it.live("install and list round-trip", () => {
+  it.live("installDir and list round-trip", () => {
     const dir = makeTempDir()
     return Effect.gen(function* () {
       const store = yield* SkillStore
 
-      yield* store.install(
-        "test-skill",
-        `---
+      yield* store.installDir("test-skill", [
+        {
+          path: "SKILL.md",
+          content: `---
 name: test-skill
 description: A test skill
 ---
 
 # Test Skill`,
-      )
+        },
+      ])
 
       const skills = yield* store.list
       expect(skills.length).toBe(1)
@@ -50,7 +52,9 @@ description: A test skill
     const dir = makeTempDir()
     return Effect.gen(function* () {
       const store = yield* SkillStore
-      yield* store.install("to-remove", "---\nname: to-remove\ndescription: bye\n---\n")
+      yield* store.installDir("to-remove", [
+        { path: "SKILL.md", content: "---\nname: to-remove\ndescription: bye\n---\n" },
+      ])
       yield* store.remove("to-remove")
       const skills = yield* store.list
       expect(skills.length).toBe(0)

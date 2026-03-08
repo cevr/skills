@@ -13,17 +13,13 @@ export class FetchError extends Data.TaggedError("FetchError")<{
   readonly cause?: unknown
 }> {
   override get message() {
-    return `Failed to fetch: ${this.url}`
+    return `Failed to fetch: ${this.url}${this.cause ? ` (${String(this.cause)})` : ""}`
   }
 }
 
-export class SourceParseError extends Data.TaggedError("SourceParseError")<{
-  readonly input: string
-}> {
-  override get message() {
-    return `Could not parse source: ${this.input}`
-  }
-}
+export class NoSkillsFoundError extends Data.TaggedError("NoSkillsFoundError")<{
+  readonly message: string
+}> {}
 
 export class SearchError extends Data.TaggedError("SearchError")<{
   readonly query: string

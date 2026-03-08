@@ -1,15 +1,16 @@
 import { Console, Effect } from "effect"
 import { HttpClient } from "@effect/platform"
 import { search } from "../lib/search-api.js"
-import type { SearchError } from "../lib/errors.js"
+import { NoSkillsFoundError, type SearchError } from "../lib/errors.js"
 
-export const runSearch = (query: string): Effect.Effect<void, SearchError, HttpClient.HttpClient> =>
+export const runSearch = (
+  query: string,
+): Effect.Effect<void, SearchError | NoSkillsFoundError, HttpClient.HttpClient> =>
   Effect.gen(function* () {
     const result = yield* search(query)
 
     if (result.skills.length === 0) {
-      yield* Console.error(`No skills found for "${query}"`)
-      return
+      return yield* new NoSkillsFoundError({ message: `No skills found for "${query}"` })
     }
 
     yield* Console.log(`Found ${result.count} skill(s) for "${query}":\n`)

@@ -6,13 +6,29 @@ import { runAdd } from "./commands/add.js"
 import { runRemove } from "./commands/remove.js"
 import { runUpdate } from "./commands/update.js"
 
-/** Print human-friendly error to stderr based on tag, then die (non-zero exit). */
+const exitCodeForTag = (tag: string): number => {
+  switch (tag) {
+    case "SkillNotFoundError":
+    case "NoSkillsFoundError":
+      return 2
+    case "LockFileError":
+      return 3
+    case "FetchError":
+    case "SearchError":
+      return 4
+    default:
+      return 1
+  }
+}
+
 const handleError = (e: { readonly _tag: string; readonly message: string }) => {
   const lines: Array<string> = [`Error: ${e.message}`, ""]
 
   switch (e._tag) {
     case "SkillNotFoundError":
       lines.push("Run 'skills' to see installed skills.")
+      break
+    case "NoSkillsFoundError":
       break
     case "FetchError":
       lines.push("Check the source and your network connection.")
@@ -28,16 +44,20 @@ const handleError = (e: { readonly _tag: string; readonly message: string }) => 
   }
 
   return Effect.forEach(lines, (line) => Console.error(line)).pipe(
-    Effect.andThen(Effect.sync(() => process.exit(1))),
+    Effect.andThen(
+      Effect.sync(() => {
+        process.exitCode = exitCodeForTag(e._tag)
+      }),
+    ),
   )
 }
 
-const dim = (s: string) => (process.stdout.isTTY ? `\x1b[2m${s}\x1b[0m` : s)
-const bold = (s: string) => (process.stdout.isTTY ? `\x1b[1m${s}\x1b[0m` : s)
+const useColor = process.stdout.isTTY && !process.env.NO_COLOR
+const dim = (s: string) => (useColor ? `\x1b[2m${s}\x1b[0m` : s)
+const bold = (s: string) => (useColor ? `\x1b[1m${s}\x1b[0m` : s)
 
 const truncate = (s: string, max: number) => (s.length > max ? s.slice(0, max - 1) + "…" : s)
 
-// Default: list installed skills
 const skillsCommand = Command.make("skills", {}, () =>
   Effect.gen(function* () {
     const store = yield* SkillStore
@@ -74,6 +94,14 @@ const skillOption = Options.text("skill").pipe(
   Options.optional,
 )
 
+const ADD_DESCRIPTION = `Install a skill from GitHub, search query, or local path
+
+Examples:
+  skills add owner/repo          # all skills from repo
+  skills add owner/repo@name     # specific skill
+  skills add .                   # from current directory
+  skills add ~/path/to/skill     # from local path`
+
 const addCommand = Command.make(
   "add",
   { source: sourceArg, skill: skillOption },
@@ -81,7 +109,7 @@ const addCommand = Command.make(
     runAdd(Option.getOrUndefined(source), Option.getOrUndefined(skill)).pipe(
       Effect.catchAll(handleError),
     ),
-).pipe(Command.withDescription("Install a skill from GitHub, search query, or local path"))
+).pipe(Command.withDescription(ADD_DESCRIPTION))
 
 const searchCommand = Command.make("search", { query: queryArg }, ({ query }) =>
   runSearch(query).pipe(Effect.catchAll(handleError)),

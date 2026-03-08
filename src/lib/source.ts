@@ -25,22 +25,15 @@ export interface SearchQuery {
 
 export type ParsedSource = GitHubRepo | GitHubRepoWithSkill | LocalPath | SearchQuery
 
-// owner/repo@skill-name
 const repoWithSkillRe = /^([a-zA-Z0-9_.-]+)\/([a-zA-Z0-9_.-]+)@(.+)$/
-
-// owner/repo or owner/repo#ref or owner/repo/subpath
 const repoRe = /^([a-zA-Z0-9_.-]+)\/([a-zA-Z0-9_.-]+)(?:#([a-zA-Z0-9_./+-]+))?(?:\/(.+))?$/
-
-// https://github.com/owner/repo/...
 const githubUrlRe = /^https?:\/\/github\.com\/([a-zA-Z0-9_.-]+)\/([a-zA-Z0-9_.-]+)\/?(.*)$/
 
 export const parseSource = (input: string): ParsedSource => {
-  // Local path: starts with . / ~ or is an absolute path
   if (input.startsWith(".") || input.startsWith("/") || input.startsWith("~")) {
     return { _tag: "LocalPath", path: input }
   }
 
-  // owner/repo@skill-name
   const skillMatch = input.match(repoWithSkillRe)
   if (skillMatch) {
     return {
@@ -51,11 +44,9 @@ export const parseSource = (input: string): ParsedSource => {
     }
   }
 
-  // GitHub URL
   const urlMatch = input.match(githubUrlRe)
   if (urlMatch) {
     const rest = urlMatch[3] ?? ""
-    // Extract ref and subpath from tree/ref/path or blob/ref/path
     const treeBlobMatch = rest.match(/^(?:tree|blob)\/([^/]+)(?:\/(.+))?$/)
     if (treeBlobMatch) {
       return {
@@ -73,7 +64,6 @@ export const parseSource = (input: string): ParsedSource => {
     }
   }
 
-  // owner/repo with optional #ref and /subpath
   const repoMatch = input.match(repoRe)
   if (repoMatch) {
     return {
@@ -85,6 +75,5 @@ export const parseSource = (input: string): ParsedSource => {
     }
   }
 
-  // Fallback: treat as search query
   return { _tag: "SearchQuery", query: input }
 }

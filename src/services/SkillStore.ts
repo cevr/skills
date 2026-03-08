@@ -1,7 +1,8 @@
 import { Context, Config, Effect, Layer, Option } from "effect"
 import { FileSystem, Path } from "@effect/platform"
 import { SkillNotFoundError } from "../lib/errors.js"
-import { parseFrontmatter, type SkillFrontmatter } from "../lib/frontmatter.js"
+import { tryParseFrontmatter } from "../lib/frontmatter.js"
+import { walkDir } from "../lib/fs.js"
 
 export interface InstalledSkill {
   readonly name: string
@@ -15,7 +16,9 @@ export class SkillStore extends Context.Tag("@skills/SkillStore")<
     readonly dir: string
     readonly list: Effect.Effect<ReadonlyArray<InstalledSkill>>
     readonly read: (name: string) => Effect.Effect<string, SkillNotFoundError>
-    readonly install: (name: string, content: string) => Effect.Effect<void>
+    readonly readDir: (
+      name: string,
+    ) => Effect.Effect<ReadonlyArray<{ path: string; content: string }>>
     readonly installDir: (
       name: string,
       files: ReadonlyArray<{ path: string; content: string }>,
@@ -48,33 +51,40 @@ export const SkillStoreLive = Layer.effect(
       if (!exists) return []
 
       const entries = yield* fs.readDirectory(dir)
-      const skills: Array<InstalledSkill> = []
 
-      for (const entry of entries) {
-        // Skip hidden files/dirs
-        if (entry.startsWith(".")) continue
+      const skills = yield* Effect.forEach(
+        entries.filter((e) => !e.startsWith(".")),
+        (entry) =>
+          Effect.gen(function* () {
+            const entryPath = pathService.join(dir, entry)
+            const stat = yield* fs.stat(entryPath).pipe(Effect.catchAll(() => Effect.succeed(null)))
+            if (!stat || stat.type !== "Directory") return null
 
-        const entryPath = pathService.join(dir, entry)
-        const stat = yield* fs.stat(entryPath).pipe(Effect.catchAll(() => Effect.succeed(null)))
-        if (!stat || stat.type !== "Directory") continue
+            const skillMdPath = pathService.join(entryPath, "SKILL.md")
+            const hasSkillMd = yield* fs.exists(skillMdPath)
+            if (!hasSkillMd) return null
 
-        const skillMdPath = pathService.join(entryPath, "SKILL.md")
-        const hasSkillMd = yield* fs.exists(skillMdPath)
-        if (!hasSkillMd) continue
+            const content = yield* fs.readFileString(skillMdPath)
+            const frontmatter = yield* tryParseFrontmatter(content)
 
-        const content = yield* fs.readFileString(skillMdPath)
-        const frontmatter: SkillFrontmatter | null = yield* parseFrontmatter(content).pipe(
-          Effect.catchAll(() => Effect.succeed(null)),
-        )
+            return {
+              name: Option.match(frontmatter, {
+                onNone: () => entry,
+                onSome: (fm) => fm.name,
+              }),
+              description: Option.match(frontmatter, {
+                onNone: () => "",
+                onSome: (fm) => fm.description,
+              }),
+              dirPath: entryPath,
+            } as InstalledSkill
+          }),
+        { concurrency: "unbounded" },
+      )
 
-        skills.push({
-          name: frontmatter?.name ?? entry,
-          description: frontmatter?.description ?? "",
-          dirPath: entryPath,
-        })
-      }
-
-      return skills.toSorted((a, b) => a.name.localeCompare(b.name))
+      return skills
+        .filter((s): s is InstalledSkill => s !== null)
+        .toSorted((a, b) => a.name.localeCompare(b.name))
     }).pipe(Effect.orDie, Effect.withSpan("SkillStore.list"))
 
     const read = (name: string) =>
@@ -85,12 +95,16 @@ export const SkillStoreLive = Layer.effect(
         return yield* fs.readFileString(skillMdPath).pipe(Effect.orDie)
       }).pipe(Effect.withSpan("SkillStore.read", { attributes: { name } }))
 
-    const install = (name: string, content: string) =>
-      Effect.gen(function* () {
-        const skillDir = pathService.join(dir, name)
-        yield* fs.makeDirectory(skillDir, { recursive: true })
-        yield* fs.writeFileString(pathService.join(skillDir, "SKILL.md"), content)
-      }).pipe(Effect.orDie, Effect.withSpan("SkillStore.install", { attributes: { name } }))
+    const platformLayer = Layer.merge(
+      Layer.succeed(FileSystem.FileSystem, fs),
+      Layer.succeed(Path.Path, pathService),
+    )
+
+    const readDir = (name: string) =>
+      walkDir(pathService.join(dir, name)).pipe(
+        Effect.provide(platformLayer),
+        Effect.withSpan("SkillStore.readDir", { attributes: { name } }),
+      )
 
     const installDir = (name: string, files: ReadonlyArray<{ path: string; content: string }>) =>
       Effect.gen(function* () {
@@ -122,6 +136,6 @@ export const SkillStoreLive = Layer.effect(
         yield* fs.remove(skillDir, { recursive: true }).pipe(Effect.orDie)
       }).pipe(Effect.withSpan("SkillStore.remove", { attributes: { name } }))
 
-    return { dir, list, read, install, installDir, syncDir, remove }
+    return { dir, list, read, readDir, installDir, syncDir, remove }
   }),
 )

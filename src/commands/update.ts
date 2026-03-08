@@ -1,9 +1,22 @@
 import { Console, Effect } from "effect"
-import { FileSystem, Path } from "@effect/platform"
+import { FileSystem } from "@effect/platform"
 import { SkillStore } from "../services/SkillStore.js"
 import { fetchSkillDir } from "../services/GitHub.js"
 import { SkillLock, type LockEntry } from "../services/SkillLock.js"
 import { parseSource } from "../lib/source.js"
+import { walkDir } from "../lib/fs.js"
+import { DEFAULT_REF } from "../lib/constants.js"
+
+type FileEntry = { readonly path: string; readonly content: string }
+
+const filesEqual = (a: ReadonlyArray<FileEntry>, b: ReadonlyArray<FileEntry>): boolean => {
+  if (a.length !== b.length) return false
+  const mapA = new Map(a.map((f) => [f.path, f.content]))
+  for (const file of b) {
+    if (mapA.get(file.path) !== file.content) return false
+  }
+  return true
+}
 
 const skillDirFromPath = (skillPath: string) =>
   skillPath === "SKILL.md" ? "" : skillPath.split("/").slice(0, -1).join("/")
@@ -30,32 +43,6 @@ const resolveRepoSource = (source: string) => {
   }
 }
 
-const readLocalDir = Effect.fn("command.update.readLocalDir")(function* (dirPath: string) {
-  const fs = yield* FileSystem.FileSystem
-  const pathService = yield* Path.Path
-
-  const files: Array<{ path: string; content: string }> = []
-
-  const walk = (currentDir: string, prefix: string): Effect.Effect<void> =>
-    Effect.gen(function* () {
-      const entries = yield* fs.readDirectory(currentDir).pipe(Effect.orDie)
-      for (const entry of entries) {
-        if (entry.startsWith(".")) continue
-        const fullPath = pathService.join(currentDir, entry)
-        const stat = yield* fs.stat(fullPath).pipe(Effect.orDie)
-        if (stat.type === "Directory") {
-          yield* walk(fullPath, prefix ? `${prefix}/${entry}` : entry)
-        } else {
-          const content = yield* fs.readFileString(fullPath).pipe(Effect.orDie)
-          files.push({ path: prefix ? `${prefix}/${entry}` : entry, content })
-        }
-      }
-    })
-
-  yield* walk(dirPath, "")
-  return files
-})
-
 const updateLocalSkill = Effect.fn("command.update.updateLocalSkill")(function* (
   name: string,
   localPath: string,
@@ -67,14 +54,17 @@ const updateLocalSkill = Effect.fn("command.update.updateLocalSkill")(function* 
   const exists = yield* fs.exists(localPath).pipe(Effect.orDie)
   if (!exists) {
     yield* Console.error(`  Skipping ${name}: local path no longer exists "${localPath}"`)
-    return false
+    return "error" as const
   }
 
-  const files = yield* readLocalDir(localPath)
-  yield* store.syncDir(name, files)
-  yield* lock.update(name).pipe(Effect.catchAll(() => Effect.void))
+  const [incoming, installed] = yield* Effect.all([walkDir(localPath), store.readDir(name)])
 
-  return true
+  if (filesEqual(incoming, installed)) return "unchanged" as const
+
+  yield* store.syncDir(name, incoming)
+  yield* lock.update(name)
+
+  return "updated" as const
 })
 
 const updateSkill = Effect.fn("command.update.updateSkill")(function* (
@@ -92,14 +82,14 @@ const updateSkill = Effect.fn("command.update.updateSkill")(function* (
   const source = resolveRepoSource(entry.source)
   if (!source) {
     yield* Console.error(`  Skipping ${name}: invalid source "${entry.source}"`)
-    return false
+    return "error"
   }
 
-  const files = yield* fetchSkillDir(
+  const incoming = yield* fetchSkillDir(
     source.owner,
     source.repo,
     skillDirFromPath(entry.skillPath),
-    source.ref ?? "main",
+    source.ref ?? DEFAULT_REF,
   ).pipe(
     Effect.catchTag("FetchError", (error) =>
       Console.error(`  Failed to update ${name}: ${error.message}`).pipe(
@@ -108,12 +98,16 @@ const updateSkill = Effect.fn("command.update.updateSkill")(function* (
     ),
   )
 
-  if (files === null) return false
+  if (incoming === null) return "error"
 
-  yield* store.syncDir(name, files)
-  yield* lock.update(name).pipe(Effect.catchAll(() => Effect.void))
+  const installed = yield* store.readDir(name)
 
-  return true
+  if (filesEqual(incoming, installed)) return "unchanged"
+
+  yield* store.syncDir(name, incoming)
+  yield* lock.update(name)
+
+  return "updated"
 })
 
 export const runUpdate = Effect.fn("command.update")(function* () {
@@ -126,16 +120,28 @@ export const runUpdate = Effect.fn("command.update")(function* () {
     return
   }
 
-  yield* Console.log(`Updating ${entries.length} skill(s)...\n`)
+  yield* Console.error(`Checking ${entries.length} skill(s)...\n`)
 
   let updated = 0
+  let unchanged = 0
   for (const [name, entry] of entries) {
-    const success = yield* updateSkill(name, entry)
-    if (!success) continue
-
-    yield* Console.log(`  Updated: ${name}`)
-    updated++
+    const result = yield* updateSkill(name, entry)
+    switch (result) {
+      case "updated":
+        yield* Console.log(`  Updated: ${name}`)
+        updated++
+        break
+      case "unchanged":
+        unchanged++
+        break
+      case "error":
+        break
+    }
   }
 
-  yield* Console.log(`\n${updated}/${entries.length} skill(s) updated.`)
+  if (updated === 0) {
+    yield* Console.log("All skills up to date.")
+  } else {
+    yield* Console.log(`\n${updated} updated, ${unchanged} unchanged.`)
+  }
 })
