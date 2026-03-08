@@ -13,12 +13,17 @@ export interface GitHubRepoWithSkill {
   readonly skillFilter: string
 }
 
+export interface LocalPath {
+  readonly _tag: "LocalPath"
+  readonly path: string
+}
+
 export interface SearchQuery {
   readonly _tag: "SearchQuery"
   readonly query: string
 }
 
-export type ParsedSource = GitHubRepo | GitHubRepoWithSkill | SearchQuery
+export type ParsedSource = GitHubRepo | GitHubRepoWithSkill | LocalPath | SearchQuery
 
 // owner/repo@skill-name
 const repoWithSkillRe = /^([a-zA-Z0-9_.-]+)\/([a-zA-Z0-9_.-]+)@(.+)$/
@@ -30,6 +35,11 @@ const repoRe = /^([a-zA-Z0-9_.-]+)\/([a-zA-Z0-9_.-]+)(?:#([a-zA-Z0-9_./+-]+))?(?
 const githubUrlRe = /^https?:\/\/github\.com\/([a-zA-Z0-9_.-]+)\/([a-zA-Z0-9_.-]+)\/?(.*)$/
 
 export const parseSource = (input: string): ParsedSource => {
+  // Local path: starts with . / ~ or is an absolute path
+  if (input.startsWith(".") || input.startsWith("/") || input.startsWith("~")) {
+    return { _tag: "LocalPath", path: input }
+  }
+
   // owner/repo@skill-name
   const skillMatch = input.match(repoWithSkillRe)
   if (skillMatch) {

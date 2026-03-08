@@ -71,4 +71,24 @@ describe("parseSource", () => {
       query: "testing",
     })
   })
+
+  test(". → LocalPath", () => {
+    const result = parseSource(".")
+    expect(result).toEqual({ _tag: "LocalPath", path: "." })
+  })
+
+  test("./skills → LocalPath", () => {
+    const result = parseSource("./skills")
+    expect(result).toEqual({ _tag: "LocalPath", path: "./skills" })
+  })
+
+  test("/absolute/path → LocalPath", () => {
+    const result = parseSource("/absolute/path")
+    expect(result).toEqual({ _tag: "LocalPath", path: "/absolute/path" })
+  })
+
+  test("~/path → LocalPath", () => {
+    const result = parseSource("~/projects/my-skill")
+    expect(result).toEqual({ _tag: "LocalPath", path: "~/projects/my-skill" })
+  })
 })

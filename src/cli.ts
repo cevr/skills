@@ -64,7 +64,7 @@ const skillsCommand = Command.make("skills", {}, () =>
   }).pipe(Effect.withSpan("command.list")),
 )
 
-const sourceArg = Args.text({ name: "source" })
+const sourceArg = Args.text({ name: "source" }).pipe(Args.optional)
 const queryArg = Args.text({ name: "query" })
 const nameArg = Args.text({ name: "name" })
 
@@ -78,8 +78,10 @@ const addCommand = Command.make(
   "add",
   { source: sourceArg, skill: skillOption },
   ({ source, skill }) =>
-    runAdd(source, Option.getOrUndefined(skill)).pipe(Effect.catchAll(handleError)),
-).pipe(Command.withDescription("Install a skill from GitHub or search query"))
+    runAdd(Option.getOrUndefined(source), Option.getOrUndefined(skill)).pipe(
+      Effect.catchAll(handleError),
+    ),
+).pipe(Command.withDescription("Install a skill from GitHub, search query, or local path"))
 
 const searchCommand = Command.make("search", { query: queryArg }, ({ query }) =>
   runSearch(query).pipe(Effect.catchAll(handleError)),

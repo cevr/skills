@@ -1,4 +1,5 @@
 import { Console, Effect } from "effect"
+import { FileSystem, Path } from "@effect/platform"
 import { SkillStore } from "../services/SkillStore.js"
 import { fetchSkillDir } from "../services/GitHub.js"
 import { SkillLock, type LockEntry } from "../services/SkillLock.js"
@@ -23,10 +24,58 @@ const resolveRepoSource = (source: string) => {
         repo: parsed.repo,
         ref: undefined,
       }
+    case "LocalPath":
     case "SearchQuery":
       return null
   }
 }
+
+const readLocalDir = Effect.fn("command.update.readLocalDir")(function* (dirPath: string) {
+  const fs = yield* FileSystem.FileSystem
+  const pathService = yield* Path.Path
+
+  const files: Array<{ path: string; content: string }> = []
+
+  const walk = (currentDir: string, prefix: string): Effect.Effect<void> =>
+    Effect.gen(function* () {
+      const entries = yield* fs.readDirectory(currentDir).pipe(Effect.orDie)
+      for (const entry of entries) {
+        if (entry.startsWith(".")) continue
+        const fullPath = pathService.join(currentDir, entry)
+        const stat = yield* fs.stat(fullPath).pipe(Effect.orDie)
+        if (stat.type === "Directory") {
+          yield* walk(fullPath, prefix ? `${prefix}/${entry}` : entry)
+        } else {
+          const content = yield* fs.readFileString(fullPath).pipe(Effect.orDie)
+          files.push({ path: prefix ? `${prefix}/${entry}` : entry, content })
+        }
+      }
+    })
+
+  yield* walk(dirPath, "")
+  return files
+})
+
+const updateLocalSkill = Effect.fn("command.update.updateLocalSkill")(function* (
+  name: string,
+  localPath: string,
+) {
+  const store = yield* SkillStore
+  const lock = yield* SkillLock
+  const fs = yield* FileSystem.FileSystem
+
+  const exists = yield* fs.exists(localPath).pipe(Effect.orDie)
+  if (!exists) {
+    yield* Console.error(`  Skipping ${name}: local path no longer exists "${localPath}"`)
+    return false
+  }
+
+  const files = yield* readLocalDir(localPath)
+  yield* store.syncDir(name, files)
+  yield* lock.update(name).pipe(Effect.catchAll(() => Effect.void))
+
+  return true
+})
 
 const updateSkill = Effect.fn("command.update.updateSkill")(function* (
   name: string,
@@ -34,6 +83,11 @@ const updateSkill = Effect.fn("command.update.updateSkill")(function* (
 ) {
   const store = yield* SkillStore
   const lock = yield* SkillLock
+
+  if (entry.source.startsWith("local:")) {
+    const localPath = entry.source.slice("local:".length)
+    return yield* updateLocalSkill(name, localPath)
+  }
 
   const source = resolveRepoSource(entry.source)
   if (!source) {

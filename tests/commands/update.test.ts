@@ -15,7 +15,7 @@ const makeTestLayer = (dir: string, github: GitHubShape) =>
   SkillLockLive.pipe(
     Layer.provideMerge(SkillStoreLive),
     Layer.provideMerge(GitHub.Test(github)),
-    Layer.provide(NodeContext.layer),
+    Layer.provideMerge(NodeContext.layer),
     Layer.provide(Layer.setConfigProvider(ConfigProvider.fromMap(new Map([["SKILLS_DIR", dir]])))),
   )
 
