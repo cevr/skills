@@ -5,6 +5,13 @@ import { runSearch } from "./commands/search.js"
 import { runAdd } from "./commands/add.js"
 import { runRemove } from "./commands/remove.js"
 import { runUpdate } from "./commands/update.js"
+import type {
+  FetchError,
+  LockFileError,
+  NoSkillsFoundError,
+  SearchError,
+  SkillNotFoundError,
+} from "./lib/errors.js"
 
 const exitCodeForTag = (tag: string): number => {
   switch (tag) {
@@ -21,25 +28,37 @@ const exitCodeForTag = (tag: string): number => {
   }
 }
 
-const handleError = (e: { readonly _tag: string; readonly message: string }) => {
+type AppError = SkillNotFoundError | NoSkillsFoundError | FetchError | SearchError | LockFileError
+
+// S3: Per-stream TTY checks
+const stdoutColor = process.stdout.isTTY && !process.env.NO_COLOR
+const stderrColor = process.stderr.isTTY && !process.env.NO_COLOR
+const dim = (s: string) => (stdoutColor ? `\x1b[2m${s}\x1b[0m` : s)
+const bold = (s: string) => (stdoutColor ? `\x1b[1m${s}\x1b[0m` : s)
+
+const truncate = (s: string, max: number) => (s.length > max ? s.slice(0, max - 1) + "…" : s)
+
+// S2: Typed error formatting (uses stderrColor since errors go to stderr)
+const formatError = (e: AppError) => {
+  const errorDim = (s: string) => (stderrColor ? `\x1b[2m${s}\x1b[0m` : s)
   const lines: Array<string> = [`Error: ${e.message}`, ""]
 
   switch (e._tag) {
     case "SkillNotFoundError":
-      lines.push("Run 'skills' to see installed skills.")
+      lines.push(errorDim("Run 'skills' to see installed skills."))
       break
     case "NoSkillsFoundError":
       break
     case "FetchError":
-      lines.push("Check the source and your network connection.")
-      lines.push("For private repos, set GITHUB_TOKEN.")
+      lines.push(errorDim("Check the source and your network connection."))
+      lines.push(errorDim("For private repos, set GITHUB_TOKEN."))
       break
     case "SearchError":
-      lines.push("Check your network connection and try again.")
+      lines.push(errorDim("Check your network connection and try again."))
       break
     case "LockFileError":
-      lines.push("The lock file may be corrupted. Delete it and re-add skills:")
-      lines.push("  rm <skills-dir>/.skill-lock.json")
+      lines.push(errorDim("The lock file may be corrupted. Delete it and re-add skills:"))
+      lines.push(errorDim("  rm <skills-dir>/.skill-lock.json"))
       break
   }
 
@@ -52,11 +71,17 @@ const handleError = (e: { readonly _tag: string; readonly message: string }) => 
   )
 }
 
-const useColor = process.stdout.isTTY && !process.env.NO_COLOR
-const dim = (s: string) => (useColor ? `\x1b[2m${s}\x1b[0m` : s)
-const bold = (s: string) => (useColor ? `\x1b[1m${s}\x1b[0m` : s)
-
-const truncate = (s: string, max: number) => (s.length > max ? s.slice(0, max - 1) + "…" : s)
+// S2: Typed catchTags instead of untyped Effect.catch
+const handleErrors = <A, R>(effect: Effect.Effect<A, AppError, R>) =>
+  effect.pipe(
+    Effect.catchTags({
+      SkillNotFoundError: formatError,
+      NoSkillsFoundError: formatError,
+      FetchError: formatError,
+      SearchError: formatError,
+      LockFileError: formatError,
+    }),
+  )
 
 const skillsCommand = Command.make("skills", {}, () =>
   Effect.gen(function* () {
@@ -106,22 +131,20 @@ const addCommand = Command.make(
   "add",
   { source: sourceArg, skill: skillOption },
   ({ source, skill }) =>
-    runAdd(Option.getOrUndefined(source), Option.getOrUndefined(skill)).pipe(
-      Effect.catch(handleError),
-    ),
+    handleErrors(runAdd(Option.getOrUndefined(source), Option.getOrUndefined(skill))),
 ).pipe(Command.withDescription(ADD_DESCRIPTION))
 
 const searchCommand = Command.make("search", { query: queryArg }, ({ query }) =>
-  runSearch(query).pipe(Effect.catch(handleError)),
+  handleErrors(runSearch(query)),
 ).pipe(Command.withDescription("Search skills.sh for skills"))
 
 const removeCommand = Command.make("remove", { name: nameArg }, ({ name }) =>
-  runRemove(name).pipe(Effect.catch(handleError)),
+  handleErrors(runRemove(name)),
 ).pipe(Command.withDescription("Remove an installed skill"))
 
-const updateCommand = Command.make("update", {}, () =>
-  runUpdate().pipe(Effect.catch(handleError)),
-).pipe(Command.withDescription("Re-fetch all installed skills from their sources"))
+const updateCommand = Command.make("update", {}, () => handleErrors(runUpdate())).pipe(
+  Command.withDescription("Re-fetch all installed skills from their sources"),
+)
 
 const command = skillsCommand.pipe(
   Command.withSubcommands([addCommand, searchCommand, removeCommand, updateCommand]),

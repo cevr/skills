@@ -8,6 +8,7 @@ import { runUpdate } from "../../src/commands/update.js"
 import { GitHub, type GitHubShape } from "../../src/services/GitHub.js"
 import { SkillLock, SkillLockLive } from "../../src/services/SkillLock.js"
 import { SkillStore, SkillStoreLive } from "../../src/services/SkillStore.js"
+import { FetchError } from "../../src/lib/errors.js"
 
 const makeTempDir = () => mkdtempSync(join(tmpdir(), "skills-update-test-"))
 
@@ -18,6 +19,9 @@ const makeTestLayer = (dir: string, github: GitHubShape) =>
     Layer.provideMerge(NodeServices.layer),
     Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown({ SKILLS_DIR: dir }))),
   )
+
+const notImplemented = (..._args: Array<unknown>) =>
+  Effect.fail(new FetchError({ url: "not-implemented" }))
 
 describe("runUpdate", () => {
   it.live("updates multi-file skills installed from owner/repo@skill sources", () => {
@@ -58,6 +62,29 @@ Fresh content
           default:
             return Effect.die(`unexpected path: ${path}`)
         }
+      },
+      listTree: notImplemented as GitHubShape["listTree"],
+      discoverSkills: notImplemented as GitHubShape["discoverSkills"],
+      fetchSkillDir: (owner, repo, dirPath, _ref) => {
+        if (dirPath === "skill/opentui") {
+          return Effect.succeed([
+            {
+              path: "SKILL.md",
+              content: `---
+name: OpenTUI
+description: Updated skill
+---
+
+Fresh content
+`,
+            },
+            {
+              path: "references/guide.md",
+              content: "new reference",
+            },
+          ])
+        }
+        return Effect.die(`unexpected dir: ${dirPath}`)
       },
     }
 

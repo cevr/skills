@@ -91,4 +91,38 @@ describe("parseSource", () => {
     const result = parseSource("~/projects/my-skill")
     expect(result).toEqual({ _tag: "LocalPath", path: "~/projects/my-skill" })
   })
+
+  // B3: ref/subpath parsing
+  test("owner/repo#ref/subpath → ref stops at /", () => {
+    const result = parseSource("owner/repo#main/skills/foo")
+    expect(result).toEqual({
+      _tag: "GitHubRepo",
+      owner: "owner",
+      repo: "repo",
+      ref: "main",
+      subpath: "skills/foo",
+    })
+  })
+
+  test("owner/repo#v2.0 → ref with dots, no subpath", () => {
+    const result = parseSource("owner/repo#v2.0")
+    expect(result).toEqual({
+      _tag: "GitHubRepo",
+      owner: "owner",
+      repo: "repo",
+      ref: "v2.0",
+      subpath: undefined,
+    })
+  })
+
+  test("owner/repo/subpath → no ref, just subpath", () => {
+    const result = parseSource("owner/repo/skills/react")
+    expect(result).toEqual({
+      _tag: "GitHubRepo",
+      owner: "owner",
+      repo: "repo",
+      ref: undefined,
+      subpath: "skills/react",
+    })
+  })
 })

@@ -5,6 +5,7 @@ import { SkillStore } from "./SkillStore.js"
 export class LockEntry extends Schema.Class<LockEntry>("LockEntry")({
   source: Schema.String,
   skillPath: Schema.String,
+  ref: Schema.optional(Schema.String),
   installedAt: Schema.String,
   updatedAt: Schema.String,
 }) {}
@@ -21,14 +22,15 @@ export class SkillLock extends ServiceMap.Service<
   SkillLock,
   {
     readonly read: Effect.Effect<LockFile, LockFileError>
-    readonly get: (name: string) => Effect.Effect<Option.Option<LockEntry>>
+    readonly get: (name: string) => Effect.Effect<Option.Option<LockEntry>, LockFileError>
     readonly add: (
       name: string,
       source: string,
       skillPath: string,
+      ref?: string,
     ) => Effect.Effect<void, LockFileError>
     readonly addMany: (
-      entries: ReadonlyArray<{ name: string; source: string; skillPath: string }>,
+      entries: ReadonlyArray<{ name: string; source: string; skillPath: string; ref?: string }>,
     ) => Effect.Effect<void, LockFileError>
     readonly remove: (name: string) => Effect.Effect<void, LockFileError>
     readonly update: (name: string) => Effect.Effect<void, LockFileError>
@@ -67,21 +69,24 @@ export const SkillLockLive = Layer.effect(
         Effect.withSpan("SkillLock.write"),
       )
 
+    // B2: Don't swallow LockFileError — only return none when file doesn't exist
     const get = (name: string) =>
       readLock.pipe(
-        Effect.catch(() => Effect.succeed(new LockFile({ version: 1, skills: {} }))),
         Effect.map((lock) => Option.fromNullishOr(lock.skills[name])),
         Effect.withSpan("SkillLock.get", { attributes: { name } }),
       )
 
-    const add = (name: string, source: string, skillPath: string) =>
+    // B4: Preserve installedAt on re-add
+    const add = (name: string, source: string, skillPath: string, ref?: string) =>
       Effect.gen(function* () {
         const lock = yield* readLock
         const now = new Date().toISOString()
+        const existing = lock.skills[name]
         const entry = new LockEntry({
           source,
           skillPath,
-          installedAt: now,
+          ref,
+          installedAt: existing?.installedAt ?? now,
           updatedAt: now,
         })
         const updated = new LockFile({
@@ -91,17 +96,22 @@ export const SkillLockLive = Layer.effect(
         yield* writeLock(updated)
       }).pipe(Effect.withSpan("SkillLock.add", { attributes: { name, source } }))
 
-    const addMany = (entries: ReadonlyArray<{ name: string; source: string; skillPath: string }>) =>
+    // B1/B4: Single read-modify-write, preserve installedAt
+    const addMany = (
+      entries: ReadonlyArray<{ name: string; source: string; skillPath: string; ref?: string }>,
+    ) =>
       Effect.gen(function* () {
         if (entries.length === 0) return
         const lock = yield* readLock
         const now = new Date().toISOString()
         const newSkills = { ...lock.skills }
-        for (const { name, source, skillPath } of entries) {
+        for (const { name, source, skillPath, ref } of entries) {
+          const existing = newSkills[name]
           newSkills[name] = new LockEntry({
             source,
             skillPath,
-            installedAt: now,
+            ref,
+            installedAt: existing?.installedAt ?? now,
             updatedAt: now,
           })
         }

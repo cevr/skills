@@ -1,7 +1,7 @@
-import { Console, Effect } from "effect"
+import { Console, Effect, Option } from "effect"
 import { FileSystem } from "effect"
 import { SkillStore } from "../services/SkillStore.js"
-import { fetchSkillDir } from "../services/GitHub.js"
+import { GitHub } from "../services/GitHub.js"
 import { SkillLock, type LockEntry } from "../services/SkillLock.js"
 import { parseSource } from "../lib/source.js"
 import { walkDir } from "../lib/fs.js"
@@ -21,25 +21,28 @@ const filesEqual = (a: ReadonlyArray<FileEntry>, b: ReadonlyArray<FileEntry>): b
 const skillDirFromPath = (skillPath: string) =>
   skillPath === "SKILL.md" ? "" : skillPath.split("/").slice(0, -1).join("/")
 
-const resolveRepoSource = (source: string) => {
-  const parsed = parseSource(source)
+// S1: Read ref from lock entry, not just from source string
+const resolveRepoSource = (
+  entry: LockEntry,
+): Option.Option<{ owner: string; repo: string; ref: string }> => {
+  const parsed = parseSource(entry.source)
 
   switch (parsed._tag) {
     case "GitHubRepo":
-      return {
+      return Option.some({
         owner: parsed.owner,
         repo: parsed.repo,
-        ref: parsed.ref,
-      }
+        ref: parsed.ref ?? entry.ref ?? DEFAULT_REF,
+      })
     case "GitHubRepoWithSkill":
-      return {
+      return Option.some({
         owner: parsed.owner,
         repo: parsed.repo,
-        ref: undefined,
-      }
+        ref: entry.ref ?? DEFAULT_REF,
+      })
     case "LocalPath":
     case "SearchQuery":
-      return null
+      return Option.none()
   }
 }
 
@@ -48,7 +51,6 @@ const updateLocalSkill = Effect.fn("command.update.updateLocalSkill")(function* 
   localPath: string,
 ) {
   const store = yield* SkillStore
-  const lock = yield* SkillLock
   const fs = yield* FileSystem.FileSystem
 
   const exists = yield* fs.exists(localPath).pipe(Effect.orDie)
@@ -57,12 +59,12 @@ const updateLocalSkill = Effect.fn("command.update.updateLocalSkill")(function* 
     return "error" as const
   }
 
+  // P6: Parallel fetch+read
   const [incoming, installed] = yield* Effect.all([walkDir(localPath), store.readDir(name)])
 
   if (filesEqual(incoming, installed)) return "unchanged" as const
 
   yield* store.syncDir(name, incoming)
-  yield* lock.update(name)
 
   return "updated" as const
 })
@@ -72,44 +74,48 @@ const updateSkill = Effect.fn("command.update.updateSkill")(function* (
   entry: LockEntry,
 ) {
   const store = yield* SkillStore
-  const lock = yield* SkillLock
+  const gh = yield* GitHub
 
   if (entry.source.startsWith("local:")) {
     const localPath = entry.source.slice("local:".length)
     return yield* updateLocalSkill(name, localPath)
   }
 
-  const source = resolveRepoSource(entry.source)
-  if (!source) {
+  const source = resolveRepoSource(entry)
+  if (Option.isNone(source)) {
     yield* Console.error(`  Skipping ${name}: invalid source "${entry.source}"`)
     return "error"
   }
 
-  const incoming = yield* fetchSkillDir(
-    source.owner,
-    source.repo,
-    skillDirFromPath(entry.skillPath),
-    source.ref ?? DEFAULT_REF,
-  ).pipe(
-    Effect.catchTag("FetchError", (error) =>
-      Console.error(`  Failed to update ${name}: ${error.message}`).pipe(
-        Effect.andThen(Effect.succeed(null)),
+  const { owner, repo, ref } = source.value
+
+  // P6: Parallel fetch+read
+  const result = yield* Effect.all([
+    gh.fetchSkillDir(owner, repo, skillDirFromPath(entry.skillPath), ref).pipe(
+      Effect.catchTag("FetchError", (error) =>
+        Console.error(`  Failed to update ${name}: ${error.message}`).pipe(
+          Effect.as(Option.none<ReadonlyArray<FileEntry>>()),
+        ),
       ),
+      Effect.map((v) => (Option.isOption(v) ? v : Option.some(v))),
     ),
-  )
+    store.readDir(name),
+  ])
 
-  if (incoming === null) return "error"
+  const [incomingOpt, installed] = result
 
-  const installed = yield* store.readDir(name)
+  if (Option.isNone(incomingOpt)) return "error"
+
+  const incoming = incomingOpt.value
 
   if (filesEqual(incoming, installed)) return "unchanged"
 
   yield* store.syncDir(name, incoming)
-  yield* lock.update(name)
 
   return "updated"
 })
 
+// P1: Parallel update loop + batched lock writes
 export const runUpdate = Effect.fn("command.update")(function* () {
   const lock = yield* SkillLock
   const lockFile = yield* lock.read
@@ -122,14 +128,20 @@ export const runUpdate = Effect.fn("command.update")(function* () {
 
   yield* Console.error(`Checking ${entries.length} skill(s)...\n`)
 
-  let updated = 0
+  const results = yield* Effect.forEach(
+    entries,
+    ([name, entry]) => updateSkill(name, entry).pipe(Effect.map((status) => ({ name, status }))),
+    { concurrency: 5 },
+  )
+
+  const updatedNames: Array<string> = []
   let unchanged = 0
-  for (const [name, entry] of entries) {
-    const result = yield* updateSkill(name, entry)
-    switch (result) {
+
+  for (const { name, status } of results) {
+    switch (status) {
       case "updated":
         yield* Console.log(`  Updated: ${name}`)
-        updated++
+        updatedNames.push(name)
         break
       case "unchanged":
         unchanged++
@@ -139,9 +151,14 @@ export const runUpdate = Effect.fn("command.update")(function* () {
     }
   }
 
-  if (updated === 0) {
+  // Batch lock writes
+  if (updatedNames.length > 0) {
+    yield* lock.updateMany(updatedNames)
+  }
+
+  if (updatedNames.length === 0) {
     yield* Console.log("All skills up to date.")
   } else {
-    yield* Console.log(`\n${updated} updated, ${unchanged} unchanged.`)
+    yield* Console.log(`\n${updatedNames.length} updated, ${unchanged} unchanged.`)
   }
 })

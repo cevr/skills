@@ -12,12 +12,10 @@ const decode = Schema.decodeUnknownEffect(SkillFrontmatter)
  * Expects `---` delimited block at start of file with `key: value` lines.
  * Handles YAML folded (`>`) and literal (`|`) block scalars.
  */
-export const parseFrontmatter = (
-  content: string,
-): Effect.Effect<SkillFrontmatter, Schema.SchemaError> => {
+export const parseFrontmatter = Effect.fn("parseFrontmatter")(function* (content: string) {
   const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---/)
   if (!match?.[1]) {
-    return decode({})
+    return yield* decode({})
   }
 
   const record: Record<string, string> = {}
@@ -67,13 +65,12 @@ export const parseFrontmatter = (
 
   flushBlock()
 
-  return decode(record)
-}
+  return yield* decode(record)
+})
 
-export const tryParseFrontmatter = (
-  content: string,
-): Effect.Effect<Option.Option<SkillFrontmatter>> =>
-  parseFrontmatter(content).pipe(
+export const tryParseFrontmatter = Effect.fn("tryParseFrontmatter")(function* (content: string) {
+  return yield* parseFrontmatter(content).pipe(
     Effect.map(Option.some),
     Effect.catch(() => Effect.succeed(Option.none())),
   )
+})

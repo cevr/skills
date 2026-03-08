@@ -1,6 +1,6 @@
 import { Console, Effect, Option } from "effect"
 import { FileSystem, Path } from "effect"
-import { NoSkillsFoundError, SkillNotFoundError } from "../lib/errors.js"
+import { FetchError, NoSkillsFoundError, SkillNotFoundError } from "../lib/errors.js"
 import { walkDir } from "../lib/fs.js"
 import { DEFAULT_REF, SKILL_DIR_PREFIXES } from "../lib/constants.js"
 import { tryParseFrontmatter } from "../lib/frontmatter.js"
@@ -12,10 +12,11 @@ import {
   type LocalPath,
 } from "../lib/source.js"
 import { toKebab } from "../lib/util.js"
-import { discoverSkills, fetchRaw, fetchSkillDir } from "../services/GitHub.js"
+import { GitHub } from "../services/GitHub.js"
 import { SkillLock } from "../services/SkillLock.js"
 import { SkillStore } from "../services/SkillStore.js"
 
+// B1/P2: Returns data instead of calling lock.add — callers batch the lock write
 const installSkillDir = Effect.fn("command.add.installSkillDir")(function* (
   owner: string,
   repo: string,
@@ -24,10 +25,10 @@ const installSkillDir = Effect.fn("command.add.installSkillDir")(function* (
   sourceStr: string,
 ) {
   const store = yield* SkillStore
-  const lock = yield* SkillLock
+  const gh = yield* GitHub
   const resolvedRef = ref ?? DEFAULT_REF
 
-  const files = yield* fetchSkillDir(owner, repo, skillDir, resolvedRef)
+  const files = yield* gh.fetchSkillDir(owner, repo, skillDir, resolvedRef)
 
   const skillMd = files.find((file) => file.path === "SKILL.md")
   const frontmatter = skillMd ? yield* tryParseFrontmatter(skillMd.content) : Option.none()
@@ -40,18 +41,23 @@ const installSkillDir = Effect.fn("command.add.installSkillDir")(function* (
   const skillMdPath = skillDir ? `${skillDir}/SKILL.md` : "SKILL.md"
 
   yield* store.installDir(name, files)
-  yield* lock.add(name, sourceStr, skillMdPath)
   yield* Console.log(`  Installed: ${name} (${files.length} file${files.length === 1 ? "" : "s"})`)
 
-  return name
+  return { name, source: sourceStr, skillPath: skillMdPath, ref }
 })
 
+interface LocalInstallResult {
+  readonly name: string
+  readonly source: string
+  readonly skillPath: string
+}
+
+// Returns data instead of calling lock.add — callers batch
 const installLocalSkillDir = Effect.fn("command.add.installLocalSkillDir")(function* (
   dirPath: string,
-  skillFilter?: string | undefined,
+  skillFilter?: string,
 ) {
   const store = yield* SkillStore
-  const lock = yield* SkillLock
   const fs = yield* FileSystem.FileSystem
   const pathService = yield* Path.Path
 
@@ -77,21 +83,24 @@ const installLocalSkillDir = Effect.fn("command.add.installLocalSkillDir")(funct
 
   const sourceStr = `local:${absPath}`
   yield* store.installDir(name, files)
-  yield* lock.add(name, sourceStr, "SKILL.md")
   yield* Console.log(`  Installed: ${name} (${files.length} file${files.length === 1 ? "" : "s"})`)
 
-  return Option.some(name)
+  return Option.some({ name, source: sourceStr, skillPath: "SKILL.md" })
 })
 
 const addFromLocal = Effect.fn("command.add.fromLocal")(function* (
   source: LocalPath,
-  skillFilter?: string | undefined,
+  skillFilter?: string,
 ) {
   const fs = yield* FileSystem.FileSystem
   const pathService = yield* Path.Path
+  const lock = yield* SkillLock
 
   const inputPath = source.path.startsWith("~")
-    ? pathService.join(process.env.HOME ?? "", source.path.slice(1))
+    ? pathService.join(
+        Option.getOrElse(Option.fromNullishOr(process.env.HOME), () => ""),
+        source.path.slice(1),
+      )
     : source.path
   const absPath = pathService.resolve(inputPath)
 
@@ -103,12 +112,15 @@ const addFromLocal = Effect.fn("command.add.fromLocal")(function* (
   // Check if the path itself is a skill directory
   const hasRootSkillMd = yield* fs.exists(pathService.join(absPath, "SKILL.md")).pipe(Effect.orDie)
   if (hasRootSkillMd) {
-    yield* installLocalSkillDir(absPath, skillFilter)
+    const result = yield* installLocalSkillDir(absPath, skillFilter)
+    if (Option.isSome(result)) {
+      yield* lock.add(result.value.name, result.value.source, result.value.skillPath)
+    }
     return
   }
 
   // Discover skills in subdirectories (look in skills/, skill/, or direct children)
-  const discovered: Array<string> = []
+  const discovered: Array<LocalInstallResult> = []
 
   for (const prefix of ["skills", "skill", "."]) {
     const searchDir = prefix === "." ? absPath : pathService.join(absPath, prefix)
@@ -126,8 +138,8 @@ const addFromLocal = Effect.fn("command.add.fromLocal")(function* (
       const hasSkillMd = yield* fs.exists(skillMdPath).pipe(Effect.orDie)
       if (!hasSkillMd) continue
 
-      const name = yield* installLocalSkillDir(entryPath, skillFilter)
-      if (Option.isSome(name)) discovered.push(name.value)
+      const result = yield* installLocalSkillDir(entryPath, skillFilter)
+      if (Option.isSome(result)) discovered.push(result.value)
     }
 
     if (discovered.length > 0) break
@@ -141,69 +153,89 @@ const addFromLocal = Effect.fn("command.add.fromLocal")(function* (
     })
   }
 
+  // Batch lock write for all discovered local skills
+  yield* lock.addMany(discovered)
+
   yield* Console.log(`\n${discovered.length} skill(s) installed from ${absPath}`)
 })
 
 const addFromRepo = Effect.fn("command.add.fromRepo")(function* (source: GitHubRepo) {
   const { owner, repo, ref, subpath } = source
+  const lock = yield* SkillLock
+  const gh = yield* GitHub
   const sourceStr = `${owner}/${repo}${ref ? `#${ref}` : ""}`
 
   if (subpath) {
     const skillDir = subpath.endsWith("SKILL.md")
       ? subpath.split("/").slice(0, -1).join("/")
       : subpath
-    yield* installSkillDir(owner, repo, skillDir, ref, sourceStr)
+    const result = yield* installSkillDir(owner, repo, skillDir, ref, sourceStr)
+    yield* lock.add(result.name, result.source, result.skillPath, result.ref)
     return
   }
 
   yield* Console.error(`Discovering skills in ${owner}/${repo}...`)
-  const skills = yield* discoverSkills(owner, repo, ref)
+  const skills = yield* gh.discoverSkills(owner, repo, ref)
 
   if (skills.length === 0) {
     return yield* new NoSkillsFoundError({ message: "No skills found in this repository." })
   }
 
   yield* Console.error(`Found ${skills.length} skill(s):\n`)
-  yield* Effect.forEach(
+
+  // B1/P2: Install concurrently, batch lock write
+  const results = yield* Effect.forEach(
     skills,
     (skill) => installSkillDir(owner, repo, skill.skillDir, ref, sourceStr),
     { concurrency: 5 },
   )
+  yield* lock.addMany(results)
 })
 
 const addFromRepoWithSkill = Effect.fn("command.add.fromRepoWithSkill")(function* (
   source: GitHubRepoWithSkill,
 ) {
   const { owner, repo, skillFilter } = source
+  const lock = yield* SkillLock
+  const gh = yield* GitHub
   const sourceStr = `${owner}/${repo}@${skillFilter}`
 
   for (const prefix of SKILL_DIR_PREFIXES) {
     const directPath = `${prefix}/${skillFilter}/SKILL.md`
-    const direct = yield* fetchRaw(owner, repo, directPath).pipe(Effect.option)
+    const direct = yield* gh.fetchRaw(owner, repo, directPath).pipe(Effect.option)
 
     if (direct._tag === "Some") {
-      yield* installSkillDir(owner, repo, `${prefix}/${skillFilter}`, undefined, sourceStr)
+      const result = yield* installSkillDir(
+        owner,
+        repo,
+        `${prefix}/${skillFilter}`,
+        undefined,
+        sourceStr,
+      )
+      yield* lock.add(result.name, result.source, result.skillPath, result.ref)
       return
     }
   }
 
-  const rootContent = yield* fetchRaw(owner, repo, "SKILL.md").pipe(Effect.option)
+  const rootContent = yield* gh.fetchRaw(owner, repo, "SKILL.md").pipe(Effect.option)
 
   if (rootContent._tag === "Some") {
     const frontmatter = yield* tryParseFrontmatter(rootContent.value)
     if (Option.isSome(frontmatter) && toKebab(frontmatter.value.name) === toKebab(skillFilter)) {
-      yield* installSkillDir(owner, repo, "", undefined, sourceStr)
+      const result = yield* installSkillDir(owner, repo, "", undefined, sourceStr)
+      yield* lock.add(result.name, result.source, result.skillPath, result.ref)
       return
     }
   }
 
-  const skills = yield* discoverSkills(owner, repo)
+  const skills = yield* gh.discoverSkills(owner, repo)
 
   for (const skill of skills) {
-    const content = yield* fetchRaw(owner, repo, skill.skillMdPath)
+    const content = yield* gh.fetchRaw(owner, repo, skill.skillMdPath)
     const frontmatter = yield* tryParseFrontmatter(content)
     if (Option.isSome(frontmatter) && toKebab(frontmatter.value.name) === toKebab(skillFilter)) {
-      yield* installSkillDir(owner, repo, skill.skillDir, undefined, sourceStr)
+      const result = yield* installSkillDir(owner, repo, skill.skillDir, undefined, sourceStr)
+      yield* lock.add(result.name, result.source, result.skillPath, result.ref)
       return
     }
   }
@@ -211,6 +243,7 @@ const addFromRepoWithSkill = Effect.fn("command.add.fromRepoWithSkill")(function
   return yield* new SkillNotFoundError({ name: skillFilter })
 })
 
+// B5: Safe source parsing instead of unsafe split/cast
 const addFromSearch = Effect.fn("command.add.fromSearch")(function* (query: string) {
   yield* Console.error(`Searching for "${query}"...`)
   const result = yield* search(query)
@@ -233,18 +266,25 @@ const addFromSearch = Effect.fn("command.add.fromSearch")(function* (query: stri
   }
   yield* Console.error(`Installing: ${skill.name} (${skill.source})\n`)
 
-  const [owner, repo] = skill.source.split("/") as [string, string]
+  const parsed = parseSource(skill.source)
+  if (parsed._tag !== "GitHubRepo" && parsed._tag !== "GitHubRepoWithSkill") {
+    return yield* new FetchError({
+      url: skill.source,
+      cause: "Unexpected source format from search API",
+    })
+  }
+
   yield* addFromRepoWithSkill({
     _tag: "GitHubRepoWithSkill",
-    owner,
-    repo,
+    owner: parsed.owner,
+    repo: parsed.repo,
     skillFilter: skill.skillId,
   })
 })
 
 export const runAdd = Effect.fn("command.add")(function* (
   sourceInput: string | undefined,
-  skillFilter?: string | undefined,
+  skillFilter?: string,
 ) {
   const parsed = parseSource(sourceInput ?? ".")
 
