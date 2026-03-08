@@ -1,5 +1,5 @@
 import { Console, Effect } from "effect"
-import { FileSystem } from "@effect/platform"
+import { FileSystem } from "effect"
 import { SkillStore } from "../services/SkillStore.js"
 import { fetchSkillDir } from "../services/GitHub.js"
 import { SkillLock, type LockEntry } from "../services/SkillLock.js"

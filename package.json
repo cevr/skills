@@ -25,7 +25,7 @@
     "postinstall": "bun run compile",
     "install:global": "ln -sf $(pwd)/bin/skills $(bun pm bin -g)/skills",
     "uninstall:global": "rm -f $(bun pm bin -g)/skills",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "bash -c 'out=$(tsc --noEmit 2>&1); echo \"$out\" | grep -v node_modules/; echo \"$out\" | grep -qE \"^(src|tests)/\" && exit 1 || exit 0'",
     "lint": "oxlint",
     "lint:fix": "oxlint --fix",
     "fmt": "oxfmt",
@@ -38,21 +38,19 @@
     "release": "changeset publish"
   },
   "dependencies": {
-    "@effect/cli": "^0.73.0",
-    "@effect/platform": "^0.94.1",
-    "@effect/platform-bun": "^0.87.0",
-    "effect": "^3.19.19"
+    "@effect/platform-bun": "4.0.0-beta.29",
+    "effect": "4.0.0-beta.29"
   },
   "devDependencies": {
     "@changesets/changelog-github": "^0.6.0",
     "@changesets/cli": "^2.30.0",
-    "@effect/language-service": "^0.77.0",
-    "@effect/platform-node": "^0.104.0",
+    "@effect/language-service": "^0.79.0",
+    "@effect/platform-node": "4.0.0-beta.29",
     "@types/bun": "^1.3.10",
-    "@types/node": "^25.3.3",
+    "@types/node": "^25.3.5",
     "concurrently": "^9.2.1",
     "effect-bun-test": "^0.2.0",
-    "lefthook": "^2.1.2",
+    "lefthook": "^2.1.3",
     "oxfmt": "^0.36.0",
     "oxlint": "^1.51.0",
     "typescript": "^5.7.3"

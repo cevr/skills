@@ -1,4 +1,4 @@
-import { describe, expect, it } from "effect-bun-test/v3"
+import { describe, expect, it } from "effect-bun-test"
 import { Effect } from "effect"
 import { parseFrontmatter } from "../../src/lib/frontmatter.js"
 
@@ -28,9 +28,7 @@ name: my-skill
 
 # No description`
 
-      const result = yield* parseFrontmatter(content).pipe(
-        Effect.catchAll(() => Effect.succeed(null)),
-      )
+      const result = yield* parseFrontmatter(content).pipe(Effect.catch(() => Effect.succeed(null)))
       expect(result).toBe(null)
     }),
   )
@@ -39,9 +37,7 @@ name: my-skill
     Effect.gen(function* () {
       const content = "# Just a heading\n\nSome content."
 
-      const result = yield* parseFrontmatter(content).pipe(
-        Effect.catchAll(() => Effect.succeed(null)),
-      )
+      const result = yield* parseFrontmatter(content).pipe(Effect.catch(() => Effect.succeed(null)))
       expect(result).toBe(null)
     }),
   )

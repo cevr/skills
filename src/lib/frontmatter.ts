@@ -1,11 +1,11 @@
-import { Effect, Option, ParseResult, Schema } from "effect"
+import { Effect, Option, Schema } from "effect"
 
 export class SkillFrontmatter extends Schema.Class<SkillFrontmatter>("SkillFrontmatter")({
   name: Schema.String,
   description: Schema.String,
 }) {}
 
-const decode = Schema.decodeUnknown(SkillFrontmatter)
+const decode = Schema.decodeUnknownEffect(SkillFrontmatter)
 
 /**
  * Extract YAML frontmatter from a markdown string.
@@ -14,7 +14,7 @@ const decode = Schema.decodeUnknown(SkillFrontmatter)
  */
 export const parseFrontmatter = (
   content: string,
-): Effect.Effect<SkillFrontmatter, ParseResult.ParseError> => {
+): Effect.Effect<SkillFrontmatter, Schema.SchemaError> => {
   const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---/)
   if (!match?.[1]) {
     return decode({})
@@ -75,5 +75,5 @@ export const tryParseFrontmatter = (
 ): Effect.Effect<Option.Option<SkillFrontmatter>> =>
   parseFrontmatter(content).pipe(
     Effect.map(Option.some),
-    Effect.catchAll(() => Effect.succeed(Option.none())),
+    Effect.catch(() => Effect.succeed(Option.none())),
   )

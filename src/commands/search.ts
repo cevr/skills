@@ -1,5 +1,5 @@
 import { Console, Effect } from "effect"
-import { HttpClient } from "@effect/platform"
+import { HttpClient } from "effect/unstable/http"
 import { search } from "../lib/search-api.js"
 import { NoSkillsFoundError, type SearchError } from "../lib/errors.js"
 

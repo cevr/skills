@@ -1,5 +1,4 @@
-import { Context, Config, Effect, Layer, Option } from "effect"
-import { FileSystem, Path } from "@effect/platform"
+import { Config, Effect, FileSystem, Layer, Option, Path, ServiceMap } from "effect"
 import { SkillNotFoundError } from "../lib/errors.js"
 import { tryParseFrontmatter } from "../lib/frontmatter.js"
 import { walkDir } from "../lib/fs.js"
@@ -10,7 +9,7 @@ export interface InstalledSkill {
   readonly dirPath: string
 }
 
-export class SkillStore extends Context.Tag("@skills/SkillStore")<
+export class SkillStore extends ServiceMap.Service<
   SkillStore,
   {
     readonly dir: string
@@ -29,7 +28,7 @@ export class SkillStore extends Context.Tag("@skills/SkillStore")<
     ) => Effect.Effect<void>
     readonly remove: (name: string) => Effect.Effect<void, SkillNotFoundError>
   }
->() {}
+>()("@skills/SkillStore") {}
 
 const skillsDirConfig = Config.option(Config.string("SKILLS_DIR"))
 
@@ -43,8 +42,8 @@ export const SkillStoreLive = Layer.effect(
     const fs = yield* FileSystem.FileSystem
     const pathService = yield* Path.Path
 
-    const configDir = yield* Effect.orDie(skillsDirConfig)
-    const dir = Option.isSome(configDir) ? configDir.value : yield* Effect.orDie(defaultSkillsDir)
+    const configDir = yield* skillsDirConfig
+    const dir = Option.isSome(configDir) ? configDir.value : yield* defaultSkillsDir
 
     const list: Effect.Effect<ReadonlyArray<InstalledSkill>> = Effect.gen(function* () {
       const exists = yield* fs.exists(dir)
@@ -57,7 +56,7 @@ export const SkillStoreLive = Layer.effect(
         (entry) =>
           Effect.gen(function* () {
             const entryPath = pathService.join(dir, entry)
-            const stat = yield* fs.stat(entryPath).pipe(Effect.catchAll(() => Effect.succeed(null)))
+            const stat = yield* fs.stat(entryPath).pipe(Effect.catch(() => Effect.succeed(null)))
             if (!stat || stat.type !== "Directory") return null
 
             const skillMdPath = pathService.join(entryPath, "SKILL.md")

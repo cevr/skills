@@ -1,4 +1,4 @@
-import { Args, Command, Options } from "@effect/cli"
+import { Argument, Command, Flag } from "effect/unstable/cli"
 import { Console, Effect, Option } from "effect"
 import { SkillStore } from "./services/SkillStore.js"
 import { runSearch } from "./commands/search.js"
@@ -84,14 +84,14 @@ const skillsCommand = Command.make("skills", {}, () =>
   }).pipe(Effect.withSpan("command.list")),
 )
 
-const sourceArg = Args.text({ name: "source" }).pipe(Args.optional)
-const queryArg = Args.text({ name: "query" })
-const nameArg = Args.text({ name: "name" })
+const sourceArg = Argument.string("source").pipe(Argument.optional)
+const queryArg = Argument.string("query")
+const nameArg = Argument.string("name")
 
-const skillOption = Options.text("skill").pipe(
-  Options.withAlias("s"),
-  Options.withDescription("Install a specific skill from a multi-skill repo"),
-  Options.optional,
+const skillOption = Flag.string("skill").pipe(
+  Flag.withAlias("s"),
+  Flag.withDescription("Install a specific skill from a multi-skill repo"),
+  Flag.optional,
 )
 
 const ADD_DESCRIPTION = `Install a skill from GitHub, search query, or local path
@@ -107,20 +107,20 @@ const addCommand = Command.make(
   { source: sourceArg, skill: skillOption },
   ({ source, skill }) =>
     runAdd(Option.getOrUndefined(source), Option.getOrUndefined(skill)).pipe(
-      Effect.catchAll(handleError),
+      Effect.catch(handleError),
     ),
 ).pipe(Command.withDescription(ADD_DESCRIPTION))
 
 const searchCommand = Command.make("search", { query: queryArg }, ({ query }) =>
-  runSearch(query).pipe(Effect.catchAll(handleError)),
+  runSearch(query).pipe(Effect.catch(handleError)),
 ).pipe(Command.withDescription("Search skills.sh for skills"))
 
 const removeCommand = Command.make("remove", { name: nameArg }, ({ name }) =>
-  runRemove(name).pipe(Effect.catchAll(handleError)),
+  runRemove(name).pipe(Effect.catch(handleError)),
 ).pipe(Command.withDescription("Remove an installed skill"))
 
 const updateCommand = Command.make("update", {}, () =>
-  runUpdate().pipe(Effect.catchAll(handleError)),
+  runUpdate().pipe(Effect.catch(handleError)),
 ).pipe(Command.withDescription("Re-fetch all installed skills from their sources"))
 
 const command = skillsCommand.pipe(
@@ -128,6 +128,5 @@ const command = skillsCommand.pipe(
 )
 
 export const runCli = Command.run(command, {
-  name: "skills",
   version: "0.1.0",
 })

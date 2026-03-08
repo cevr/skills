@@ -1,5 +1,5 @@
 import { Console, Effect, Option } from "effect"
-import { FileSystem, Path } from "@effect/platform"
+import { FileSystem, Path } from "effect"
 import { NoSkillsFoundError, SkillNotFoundError } from "../lib/errors.js"
 import { walkDir } from "../lib/fs.js"
 import { DEFAULT_REF, SKILL_DIR_PREFIXES } from "../lib/constants.js"
@@ -119,7 +119,7 @@ const addFromLocal = Effect.fn("command.add.fromLocal")(function* (
     for (const entry of entries) {
       if (entry.startsWith(".")) continue
       const entryPath = pathService.join(searchDir, entry)
-      const stat = yield* fs.stat(entryPath).pipe(Effect.catchAll(() => Effect.succeed(null)))
+      const stat = yield* fs.stat(entryPath).pipe(Effect.catch(() => Effect.succeed(null)))
       if (!stat || stat.type !== "Directory") continue
 
       const skillMdPath = pathService.join(entryPath, "SKILL.md")
@@ -242,35 +242,34 @@ const addFromSearch = Effect.fn("command.add.fromSearch")(function* (query: stri
   })
 })
 
-export const runAdd = Effect.fn("command.add")(
-  function* (sourceInput: string | undefined, skillFilter?: string | undefined) {
-    const parsed = parseSource(sourceInput ?? ".")
+export const runAdd = Effect.fn("command.add")(function* (
+  sourceInput: string | undefined,
+  skillFilter?: string | undefined,
+) {
+  const parsed = parseSource(sourceInput ?? ".")
 
-    if (skillFilter && parsed._tag === "GitHubRepo") {
-      yield* addFromRepoWithSkill({
-        _tag: "GitHubRepoWithSkill",
-        owner: parsed.owner,
-        repo: parsed.repo,
-        skillFilter,
-      })
-      return
-    }
+  if (skillFilter && parsed._tag === "GitHubRepo") {
+    yield* addFromRepoWithSkill({
+      _tag: "GitHubRepoWithSkill",
+      owner: parsed.owner,
+      repo: parsed.repo,
+      skillFilter,
+    })
+    return
+  }
 
-    switch (parsed._tag) {
-      case "GitHubRepo":
-        yield* addFromRepo(parsed)
-        break
-      case "GitHubRepoWithSkill":
-        yield* addFromRepoWithSkill(parsed)
-        break
-      case "LocalPath":
-        yield* addFromLocal(parsed, skillFilter)
-        break
-      case "SearchQuery":
-        yield* addFromSearch(parsed.query)
-        break
-    }
-  },
-  (effect, sourceInput) =>
-    Effect.withSpan(effect, "command.add", { attributes: { sourceInput: sourceInput ?? "." } }),
-)
+  switch (parsed._tag) {
+    case "GitHubRepo":
+      yield* addFromRepo(parsed)
+      break
+    case "GitHubRepoWithSkill":
+      yield* addFromRepoWithSkill(parsed)
+      break
+    case "LocalPath":
+      yield* addFromLocal(parsed, skillFilter)
+      break
+    case "SearchQuery":
+      yield* addFromSearch(parsed.query)
+      break
+  }
+})

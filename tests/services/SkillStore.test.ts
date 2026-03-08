@@ -1,6 +1,6 @@
-import { describe, expect, it } from "effect-bun-test/v3"
+import { describe, expect, it } from "effect-bun-test"
 import { ConfigProvider, Effect, Layer } from "effect"
-import { NodeContext } from "@effect/platform-node"
+import { NodeServices } from "@effect/platform-node"
 import { SkillStore, SkillStoreLive } from "../../src/services/SkillStore.js"
 import { existsSync, mkdtempSync, readFileSync } from "node:fs"
 import { join } from "node:path"
@@ -10,8 +10,8 @@ const makeTempDir = () => mkdtempSync(join(tmpdir(), "skills-test-"))
 
 const makeTestLayer = (dir: string) =>
   SkillStoreLive.pipe(
-    Layer.provide(NodeContext.layer),
-    Layer.provide(Layer.setConfigProvider(ConfigProvider.fromMap(new Map([["SKILLS_DIR", dir]])))),
+    Layer.provide(NodeServices.layer),
+    Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown({ SKILLS_DIR: dir }))),
   )
 
 describe("SkillStore", () => {

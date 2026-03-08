@@ -1,12 +1,12 @@
-import { HttpClient, HttpClientRequest, HttpClientResponse } from "@effect/platform"
-import { Config, Context, Effect, Layer, Option, Schema } from "effect"
+import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http"
+import { Config, Effect, Layer, Option, Schema, ServiceMap } from "effect"
 import { FetchError } from "../lib/errors.js"
 import { DEFAULT_REF, SKILL_DIR_PREFIXES } from "../lib/constants.js"
 
 const GitHubContentEntrySchema = Schema.Struct({
   name: Schema.String,
   path: Schema.String,
-  type: Schema.Literal("file", "dir", "symlink", "submodule"),
+  type: Schema.Literals(["file", "dir", "symlink", "submodule"]),
 })
 
 const GitHubContentsArraySchema = Schema.Array(GitHubContentEntrySchema)
@@ -14,7 +14,9 @@ const GitHubContentsArraySchema = Schema.Array(GitHubContentEntrySchema)
 type GitHubContentEntry = typeof GitHubContentEntrySchema.Type
 
 const decodeContents = HttpClientResponse.schemaBodyJson(GitHubContentsArraySchema)
-const decodeContentsJson = Schema.decodeUnknown(Schema.parseJson(GitHubContentsArraySchema))
+const decodeContentsJson = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(GitHubContentsArraySchema),
+)
 const githubToken = Config.option(Config.string("GITHUB_TOKEN"))
 
 export interface GitHubShape {
@@ -46,8 +48,10 @@ const encodeRepoPath = (path: string) => path.split("/").map(encodeURIComponent)
 const contentsEndpoint = (owner: string, repo: string, path: string, ref?: string) =>
   `repos/${owner}/${repo}/contents${path ? `/${encodeRepoPath(path)}` : ""}${ref ? `?ref=${encodeURIComponent(ref)}` : ""}`
 
-export class GitHubCli extends Context.Tag("@skills/GitHubCli")<GitHubCli, GitHubCliShape>() {
-  static readonly Live = Layer.sync(this, () => {
+export class GitHubCli extends ServiceMap.Service<GitHubCli, GitHubCliShape>()(
+  "@skills/GitHubCli",
+) {
+  static readonly layer = Layer.sync(this, () => {
     const run = Effect.fn("GitHubCli.run")(function* (args: ReadonlyArray<string>) {
       const process = yield* Effect.try({
         try: () => Bun.spawn(["gh", ...args], { stdout: "pipe", stderr: "pipe" }),
@@ -118,8 +122,10 @@ export class GitHubCli extends Context.Tag("@skills/GitHubCli")<GitHubCli, GitHu
   })
 }
 
-export class GitHubHttp extends Context.Tag("@skills/GitHubHttp")<GitHubHttp, GitHubHttpShape>() {
-  static readonly Live = Layer.effect(
+export class GitHubHttp extends ServiceMap.Service<GitHubHttp, GitHubHttpShape>()(
+  "@skills/GitHubHttp",
+) {
+  static readonly layer = Layer.effect(
     this,
     Effect.gen(function* () {
       const client = (yield* HttpClient.HttpClient).pipe(HttpClient.filterStatusOk)
@@ -127,7 +133,11 @@ export class GitHubHttp extends Context.Tag("@skills/GitHubHttp")<GitHubHttp, Gi
       const withAuth = Effect.fn("GitHubHttp.withAuth")(function* (
         request: HttpClientRequest.HttpClientRequest,
       ) {
-        const token = yield* githubToken.pipe(Effect.orDie)
+        const token = yield* Effect.orDie(
+          Effect.gen(function* () {
+            return yield* githubToken
+          }),
+        )
         return Option.match(token, {
           onNone: () => request,
           onSome: (value) =>
@@ -136,7 +146,10 @@ export class GitHubHttp extends Context.Tag("@skills/GitHubHttp")<GitHubHttp, Gi
       })
 
       return GitHubHttp.of({
-        hasExplicitToken: () => githubToken.pipe(Effect.orDie, Effect.map(Option.isSome)),
+        hasExplicitToken: () =>
+          Effect.gen(function* () {
+            return Option.isSome(yield* githubToken)
+          }).pipe(Effect.orDie),
         listContents: Effect.fn("GitHubHttp.listContents")(function* (
           owner: string,
           repo: string,
@@ -189,8 +202,8 @@ export class GitHubHttp extends Context.Tag("@skills/GitHubHttp")<GitHubHttp, Gi
   )
 }
 
-export class GitHub extends Context.Tag("@skills/GitHub")<GitHub, GitHubShape>() {
-  static readonly Live = Layer.effect(
+export class GitHub extends ServiceMap.Service<GitHub, GitHubShape>()("@skills/GitHub") {
+  static readonly layer = Layer.effect(
     this,
     Effect.gen(function* () {
       const cli = yield* GitHubCli
@@ -230,9 +243,9 @@ export class GitHub extends Context.Tag("@skills/GitHub")<GitHub, GitHubShape>()
           ),
       })
     }),
-  ).pipe(Layer.provideMerge(GitHubCli.Live), Layer.provideMerge(GitHubHttp.Live))
+  ).pipe(Layer.provideMerge(GitHubCli.layer), Layer.provideMerge(GitHubHttp.layer))
 
-  static readonly Test = (implementation: GitHubShape) => Layer.succeed(this, implementation)
+  static readonly layerTest = (implementation: GitHubShape) => Layer.succeed(this, implementation)
 }
 
 export interface SkillFile {
@@ -252,7 +265,10 @@ export const listContents = (
   path: string,
   ref?: string,
 ): Effect.Effect<ReadonlyArray<GitHubContentEntry>, FetchError, GitHub> =>
-  Effect.flatMap(GitHub, (github) => github.listContents(owner, repo, path, ref))
+  Effect.gen(function* () {
+    const github = yield* GitHub
+    return yield* github.listContents(owner, repo, path, ref)
+  })
 
 export const fetchRaw = (
   owner: string,
@@ -260,93 +276,93 @@ export const fetchRaw = (
   path: string,
   ref = DEFAULT_REF,
 ): Effect.Effect<string, FetchError, GitHub> =>
-  Effect.flatMap(GitHub, (github) => github.fetchRaw(owner, repo, path, ref))
+  Effect.gen(function* () {
+    const github = yield* GitHub
+    return yield* github.fetchRaw(owner, repo, path, ref)
+  })
 
-export const discoverSkills = Effect.fn("GitHub.discoverSkills")(
-  function* (owner: string, repo: string, ref?: string) {
-    const skills: Array<SkillEntry> = []
+export const discoverSkills = Effect.fn("GitHub.discoverSkills")(function* (
+  owner: string,
+  repo: string,
+  ref?: string,
+) {
+  const skills: Array<SkillEntry> = []
 
-    for (const skillsDir of SKILL_DIR_PREFIXES) {
-      const entries = yield* listContents(owner, repo, skillsDir, ref).pipe(
-        Effect.catchTag("FetchError", () =>
-          Effect.succeed([] as ReadonlyArray<GitHubContentEntry>),
-        ),
-      )
-      const dirs = entries.filter((entry) => entry.type === "dir")
-
-      yield* Effect.forEach(
-        dirs,
-        (dir) =>
-          listContents(owner, repo, dir.path, ref).pipe(
-            Effect.catchTag("FetchError", () =>
-              Effect.succeed([] as ReadonlyArray<GitHubContentEntry>),
-            ),
-            Effect.tap((children) => {
-              if (children.some((child) => child.name === "SKILL.md")) {
-                skills.push({
-                  dirName: dir.name,
-                  skillMdPath: `${dir.path}/SKILL.md`,
-                  skillDir: dir.path,
-                })
-              }
-              return Effect.void
-            }),
-          ),
-        { concurrency: "unbounded" },
-      )
-
-      if (skills.length > 0) break
-    }
-
-    if (skills.length === 0) {
-      const rootEntries = yield* listContents(owner, repo, "", ref).pipe(
-        Effect.catchTag("FetchError", () =>
-          Effect.succeed([] as ReadonlyArray<GitHubContentEntry>),
-        ),
-      )
-      if (rootEntries.some((entry) => entry.name === "SKILL.md")) {
-        skills.push({
-          dirName: repo,
-          skillMdPath: "SKILL.md",
-          skillDir: "",
-        })
-      }
-    }
-
-    return skills
-  },
-  (effect, owner, repo, ref) =>
-    Effect.withSpan(effect, "GitHub.discoverSkills", { attributes: { owner, repo, ref } }),
-)
-
-export const fetchSkillDir = Effect.fn("GitHub.fetchSkillDir")(
-  function* (owner: string, repo: string, dirPath: string, ref = DEFAULT_REF) {
-    const fileEntries: Array<{ path: string; relativePath: string }> = []
-
-    const walk = (path: string): Effect.Effect<void, FetchError, GitHub> =>
-      Effect.gen(function* () {
-        const entries = yield* listContents(owner, repo, path, ref)
-        for (const entry of entries) {
-          if (entry.type === "file") {
-            const relativePath = dirPath ? entry.path.slice(dirPath.length + 1) : entry.path
-            fileEntries.push({ path: entry.path, relativePath })
-          } else if (entry.type === "dir") {
-            yield* walk(entry.path)
-          }
-        }
-      })
-
-    yield* walk(dirPath)
-
-    return yield* Effect.forEach(
-      fileEntries,
-      (entry) =>
-        fetchRaw(owner, repo, entry.path, ref).pipe(
-          Effect.map((content) => ({ path: entry.relativePath, content })),
-        ),
-      { concurrency: 5 },
+  for (const skillsDir of SKILL_DIR_PREFIXES) {
+    const entries = yield* listContents(owner, repo, skillsDir, ref).pipe(
+      Effect.catchTag("FetchError", () => Effect.succeed([] as ReadonlyArray<GitHubContentEntry>)),
     )
-  },
-  (effect, owner, repo, dirPath, ref) =>
-    Effect.withSpan(effect, "GitHub.fetchSkillDir", { attributes: { owner, repo, dirPath, ref } }),
-)
+    const dirs = entries.filter((entry) => entry.type === "dir")
+
+    yield* Effect.forEach(
+      dirs,
+      (dir) =>
+        listContents(owner, repo, dir.path, ref).pipe(
+          Effect.catchTag("FetchError", () =>
+            Effect.succeed([] as ReadonlyArray<GitHubContentEntry>),
+          ),
+          Effect.tap((children) => {
+            if (children.some((child) => child.name === "SKILL.md")) {
+              skills.push({
+                dirName: dir.name,
+                skillMdPath: `${dir.path}/SKILL.md`,
+                skillDir: dir.path,
+              })
+            }
+            return Effect.void
+          }),
+        ),
+      { concurrency: "unbounded" },
+    )
+
+    if (skills.length > 0) break
+  }
+
+  if (skills.length === 0) {
+    const rootEntries = yield* listContents(owner, repo, "", ref).pipe(
+      Effect.catchTag("FetchError", () => Effect.succeed([] as ReadonlyArray<GitHubContentEntry>)),
+    )
+    if (rootEntries.some((entry) => entry.name === "SKILL.md")) {
+      skills.push({
+        dirName: repo,
+        skillMdPath: "SKILL.md",
+        skillDir: "",
+      })
+    }
+  }
+
+  return skills
+})
+
+export const fetchSkillDir = Effect.fn("GitHub.fetchSkillDir")(function* (
+  owner: string,
+  repo: string,
+  dirPath: string,
+  ref = DEFAULT_REF,
+) {
+  const fileEntries: Array<{ path: string; relativePath: string }> = []
+
+  const walk = (path: string): Effect.Effect<void, FetchError, GitHub> =>
+    Effect.gen(function* () {
+      const entries = yield* listContents(owner, repo, path, ref)
+      for (const entry of entries) {
+        if (entry.type === "file") {
+          const relativePath = dirPath ? entry.path.slice(dirPath.length + 1) : entry.path
+          fileEntries.push({ path: entry.path, relativePath })
+        } else if (entry.type === "dir") {
+          yield* walk(entry.path)
+        }
+      }
+    })
+
+  yield* walk(dirPath)
+
+  return yield* Effect.forEach(
+    fileEntries,
+    (entry) =>
+      fetchRaw(owner, repo, entry.path, ref).pipe(
+        Effect.map((content) => ({ path: entry.relativePath, content })),
+      ),
+    { concurrency: 5 },
+  )
+})

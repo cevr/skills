@@ -23,7 +23,7 @@ Sources → `parseSource` → tagged union → command dispatches by `_tag`.
 - Shared constants in `src/lib/constants.ts`: `SKILL_DIR_PREFIXES`, `DEFAULT_REF`
 - Shared `walkDir` in `src/lib/fs.ts` — single recursive dir walker for all callers
 
-## Services (Effect Context.Tag)
+## Services (Effect v4 ServiceMap.Service)
 
 | Service      | Purpose                                                                                                  |
 | ------------ | -------------------------------------------------------------------------------------------------------- |
@@ -52,9 +52,11 @@ Sources → `parseSource` → tagged union → command dispatches by `_tag`.
 - `fetchSkillDir` strips directory prefix from paths — files are relative to skill root
 - `toKebab(frontmatter.name)` determines install dir name, not the directory name on disk
 - `syncDir` deletes then re-creates — not a merge
-- `Args.optional` from `@effect/cli` wraps in `Option` — unwrap with `Option.getOrUndefined`
-- `tryParseFrontmatter` returns `Effect<Option<SkillFrontmatter>>` — use this over `parseFrontmatter` + `catchAll`
+- `Argument.optional` from `effect/unstable/cli` wraps in `Option` — unwrap with `Option.getOrUndefined`
+- `tryParseFrontmatter` returns `Effect<Option<SkillFrontmatter>>` — use this over `parseFrontmatter` + `catch`
 - `SkillLock.get` returns `Option<LockEntry>`, not `null`
 - `SkillStore.readDir` calls shared `walkDir` but provides platform services internally — no leaked requirements
 - GitHub transport resolves lazily via `Effect.cached` — `skills list` never spawns `gh auth status`
-- Lock write errors propagate — never swallow with `catchAll`
+- Lock write errors propagate — never swallow with `Effect.catch`
+- `effect-bun-test/v3` is broken with Effect v4 — use `effect-bun-test` (main export)
+- `effect-bun-test` ships raw `.ts` — its `/v3` export causes tsc errors in node_modules; typecheck script filters these

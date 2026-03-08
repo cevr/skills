@@ -1,6 +1,6 @@
-import { describe, expect, it } from "effect-bun-test/v3"
+import { describe, expect, it } from "effect-bun-test"
 import { ConfigProvider, Effect, Layer, Option } from "effect"
-import { NodeContext } from "@effect/platform-node"
+import { NodeServices } from "@effect/platform-node"
 import { SkillStoreLive } from "../../src/services/SkillStore.js"
 import { SkillLock, SkillLockLive } from "../../src/services/SkillLock.js"
 import { mkdtempSync } from "node:fs"
@@ -12,8 +12,8 @@ const makeTempDir = () => mkdtempSync(join(tmpdir(), "skills-lock-test-"))
 const makeTestLayer = (dir: string) =>
   SkillLockLive.pipe(
     Layer.provideMerge(SkillStoreLive),
-    Layer.provide(NodeContext.layer),
-    Layer.provide(Layer.setConfigProvider(ConfigProvider.fromMap(new Map([["SKILLS_DIR", dir]])))),
+    Layer.provide(NodeServices.layer),
+    Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown({ SKILLS_DIR: dir }))),
   )
 
 describe("SkillLock", () => {

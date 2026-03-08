@@ -1,6 +1,6 @@
-import { describe, expect, it } from "effect-bun-test/v3"
+import { describe, expect, it } from "effect-bun-test"
 import { ConfigProvider, Effect, Layer } from "effect"
-import { NodeContext } from "@effect/platform-node"
+import { NodeServices } from "@effect/platform-node"
 import { existsSync, mkdtempSync, readFileSync } from "node:fs"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
@@ -14,9 +14,9 @@ const makeTempDir = () => mkdtempSync(join(tmpdir(), "skills-update-test-"))
 const makeTestLayer = (dir: string, github: GitHubShape) =>
   SkillLockLive.pipe(
     Layer.provideMerge(SkillStoreLive),
-    Layer.provideMerge(GitHub.Test(github)),
-    Layer.provideMerge(NodeContext.layer),
-    Layer.provide(Layer.setConfigProvider(ConfigProvider.fromMap(new Map([["SKILLS_DIR", dir]])))),
+    Layer.provideMerge(GitHub.layerTest(github)),
+    Layer.provideMerge(NodeServices.layer),
+    Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown({ SKILLS_DIR: dir }))),
   )
 
 describe("runUpdate", () => {

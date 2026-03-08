@@ -1,5 +1,4 @@
-import { Effect } from "effect"
-import { FileSystem, Path } from "@effect/platform"
+import { Effect, FileSystem, Path } from "effect"
 
 export const walkDir = Effect.fn("walkDir")(function* (dirPath: string) {
   const fs = yield* FileSystem.FileSystem

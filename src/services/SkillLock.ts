@@ -1,5 +1,4 @@
-import { Context, Effect, Layer, Option, Schema } from "effect"
-import { FileSystem, Path } from "@effect/platform"
+import { Effect, FileSystem, Layer, Option, Path, Schema, ServiceMap } from "effect"
 import { LockFileError } from "../lib/errors.js"
 import { SkillStore } from "./SkillStore.js"
 
@@ -12,13 +11,13 @@ export class LockEntry extends Schema.Class<LockEntry>("LockEntry")({
 
 export class LockFile extends Schema.Class<LockFile>("LockFile")({
   version: Schema.Literal(1),
-  skills: Schema.Record({ key: Schema.String, value: LockEntry }),
+  skills: Schema.Record(Schema.String, LockEntry),
 }) {}
 
-const decodeLockFileJson = Schema.decodeUnknown(Schema.parseJson(LockFile))
-const encodeLockFileJson = Schema.encodeUnknown(Schema.parseJson(LockFile))
+const decodeLockFileJson = Schema.decodeUnknownEffect(Schema.fromJsonString(LockFile))
+const encodeLockFileJson = Schema.encodeUnknownEffect(Schema.fromJsonString(LockFile))
 
-export class SkillLock extends Context.Tag("@skills/SkillLock")<
+export class SkillLock extends ServiceMap.Service<
   SkillLock,
   {
     readonly read: Effect.Effect<LockFile, LockFileError>
@@ -35,7 +34,7 @@ export class SkillLock extends Context.Tag("@skills/SkillLock")<
     readonly update: (name: string) => Effect.Effect<void, LockFileError>
     readonly updateMany: (names: ReadonlyArray<string>) => Effect.Effect<void, LockFileError>
   }
->() {}
+>()("@skills/SkillLock") {}
 
 export const SkillLockLive = Layer.effect(
   SkillLock,
@@ -70,8 +69,8 @@ export const SkillLockLive = Layer.effect(
 
     const get = (name: string) =>
       readLock.pipe(
-        Effect.catchAll(() => Effect.succeed(new LockFile({ version: 1, skills: {} }))),
-        Effect.map((lock) => Option.fromNullable(lock.skills[name])),
+        Effect.catch(() => Effect.succeed(new LockFile({ version: 1, skills: {} }))),
+        Effect.map((lock) => Option.fromNullishOr(lock.skills[name])),
         Effect.withSpan("SkillLock.get", { attributes: { name } }),
       )
 

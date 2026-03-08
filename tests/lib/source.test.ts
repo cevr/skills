@@ -1,4 +1,4 @@
-import { describe, expect, test } from "effect-bun-test/v3"
+import { describe, expect, test } from "effect-bun-test"
 import { parseSource } from "../../src/lib/source.js"
 
 describe("parseSource", () => {
