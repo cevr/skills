@@ -1,6 +1,7 @@
 import { Argument, Command, Flag } from "effect/unstable/cli"
-import { Console, Effect, Option } from "effect"
+import { Console, Effect, Option, Path } from "effect"
 import { SkillStore } from "./services/SkillStore.js"
+import { SkillLock } from "./services/SkillLock.js"
 import { runSearch } from "./commands/search.js"
 import { runAdd } from "./commands/add.js"
 import { runRemove } from "./commands/remove.js"
@@ -86,9 +87,14 @@ const handleErrors = <A, R>(effect: Effect.Effect<A, AppError, R>) =>
 const skillsCommand = Command.make("skills", {}, () =>
   Effect.gen(function* () {
     const store = yield* SkillStore
-    const skills = yield* store.list
+    const lock = yield* SkillLock
+    const pathService = yield* Path.Path
+    const [skills, lockFile] = yield* Effect.all([store.list, lock.read])
 
-    if (skills.length === 0) {
+    const managed = skills.filter((s) => pathService.basename(s.dirPath) in lockFile.skills)
+    const unmanagedCount = skills.length - managed.length
+
+    if (managed.length === 0 && unmanagedCount === 0) {
       yield* Console.log("No skills installed.")
       yield* Console.log("")
       yield* Console.log("Install skills:")
@@ -98,15 +104,23 @@ const skillsCommand = Command.make("skills", {}, () =>
       return
     }
 
-    yield* Console.log(`${bold(`${skills.length} skill(s) installed`)}\n`)
-    for (const skill of skills) {
-      yield* Console.log(`  ${bold(skill.name)}`)
-      if (skill.description) {
-        yield* Console.log(`  ${dim(truncate(skill.description, 80))}`)
+    if (managed.length === 0) {
+      yield* Console.log("No managed skills.")
+    } else {
+      yield* Console.log(`${bold(`${managed.length} skill(s) managed`)}\n`)
+      for (const skill of managed) {
+        yield* Console.log(`  ${bold(skill.name)}`)
+        if (skill.description) {
+          yield* Console.log(`  ${dim(truncate(skill.description, 80))}`)
+        }
+        yield* Console.log("")
       }
-      yield* Console.log("")
     }
-  }).pipe(Effect.withSpan("command.list")),
+
+    if (unmanagedCount > 0) {
+      yield* Console.log(dim(`(${unmanagedCount} unmanaged)`))
+    }
+  }).pipe(handleErrors, Effect.withSpan("command.list")),
 )
 
 const sourceArg = Argument.string("source").pipe(Argument.optional)
