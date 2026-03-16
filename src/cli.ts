@@ -32,8 +32,8 @@ const exitCodeForTag = (tag: string): number => {
 type AppError = SkillNotFoundError | NoSkillsFoundError | FetchError | SearchError | LockFileError
 
 // S3: Per-stream TTY checks
-const stdoutColor = process.stdout.isTTY && !process.env.NO_COLOR
-const stderrColor = process.stderr.isTTY && !process.env.NO_COLOR
+const stdoutColor = process.stdout.isTTY && !process.env["NO_COLOR"]
+const stderrColor = process.stderr.isTTY && !process.env["NO_COLOR"]
 const dim = (s: string) => (stdoutColor ? `\x1b[2m${s}\x1b[0m` : s)
 const bold = (s: string) => (stdoutColor ? `\x1b[1m${s}\x1b[0m` : s)
 

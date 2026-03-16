@@ -108,11 +108,12 @@ const discoverFromTree = (
     for (const entry of tree) {
       if (entry.type !== "blob") continue
       const match = entry.path.match(pattern)
-      if (match) {
+      const dirName = match?.[1]
+      if (dirName) {
         skills.push({
-          dirName: match[1]!,
+          dirName,
           skillMdPath: entry.path,
-          skillDir: `${prefix}/${match[1]!}`,
+          skillDir: `${prefix}/${dirName}`,
         })
       }
     }

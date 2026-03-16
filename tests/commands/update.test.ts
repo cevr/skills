@@ -1,7 +1,7 @@
 import { describe, expect, it } from "effect-bun-test"
-import { ConfigProvider, Effect, Layer } from "effect"
+import { ConfigProvider, Effect, Layer, Option } from "effect"
 import { NodeServices } from "@effect/platform-node"
-import { existsSync, mkdtempSync, readFileSync } from "node:fs"
+import { existsSync, mkdtempSync, readFileSync, writeFileSync, mkdirSync } from "node:fs"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
 import { runUpdate } from "../../src/commands/update.js"
@@ -24,6 +24,68 @@ const notImplemented = (..._args: Array<unknown>) =>
   Effect.fail(new FetchError({ url: "not-implemented" }))
 
 describe("runUpdate", () => {
+  it.live("removes local skill when source path no longer exists", () => {
+    const dir = makeTempDir()
+
+    const github: GitHubShape = {
+      listContents: notImplemented as GitHubShape["listContents"],
+      fetchRaw: notImplemented as GitHubShape["fetchRaw"],
+      listTree: notImplemented as GitHubShape["listTree"],
+      discoverSkills: notImplemented as GitHubShape["discoverSkills"],
+      fetchSkillDir: notImplemented as GitHubShape["fetchSkillDir"],
+    }
+
+    return Effect.gen(function* () {
+      const store = yield* SkillStore
+      const lock = yield* SkillLock
+
+      // Install a skill and add a lock entry pointing to a non-existent local path
+      yield* store.installDir("my-local-skill", [
+        { path: "SKILL.md", content: "---\nname: my-local-skill\ndescription: test\n---\n" },
+      ])
+      yield* lock.add("my-local-skill", "local:/tmp/does-not-exist-ever", "SKILL.md")
+
+      yield* runUpdate()
+
+      // Skill dir and lock entry should both be gone
+      const lockEntry = yield* lock.get("my-local-skill")
+      expect(Option.isNone(lockEntry)).toBe(true)
+      expect(existsSync(join(dir, "my-local-skill"))).toBe(false)
+    }).pipe(Effect.provide(makeTestLayer(dir, github)))
+  })
+
+  it.live("re-creates installed skill when dir is missing but lock entry exists", () => {
+    const dir = makeTempDir()
+    // Create a local source dir with a skill
+    const sourceDir = makeTempDir()
+    mkdirSync(join(sourceDir, "my-skill"), { recursive: true })
+    writeFileSync(
+      join(sourceDir, "my-skill", "SKILL.md"),
+      "---\nname: my-skill\ndescription: restored\n---\nContent\n",
+    )
+
+    const github: GitHubShape = {
+      listContents: notImplemented as GitHubShape["listContents"],
+      fetchRaw: notImplemented as GitHubShape["fetchRaw"],
+      listTree: notImplemented as GitHubShape["listTree"],
+      discoverSkills: notImplemented as GitHubShape["discoverSkills"],
+      fetchSkillDir: notImplemented as GitHubShape["fetchSkillDir"],
+    }
+
+    return Effect.gen(function* () {
+      const lock = yield* SkillLock
+
+      // Add lock entry but do NOT install the skill dir — simulates deleted dir
+      yield* lock.add("my-skill", `local:${join(sourceDir, "my-skill")}`, "SKILL.md")
+
+      yield* runUpdate()
+
+      // Skill dir should be re-created from source
+      expect(existsSync(join(dir, "my-skill", "SKILL.md"))).toBe(true)
+      expect(readFileSync(join(dir, "my-skill", "SKILL.md"), "utf8")).toContain("restored")
+    }).pipe(Effect.provide(makeTestLayer(dir, github)))
+  })
+
   it.live("updates multi-file skills installed from owner/repo@skill sources", () => {
     const dir = makeTempDir()
 

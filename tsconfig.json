@@ -1,26 +1,68 @@
 {
   "compilerOptions": {
-    "target": "ES2023",
-    "lib": ["ES2023"],
-    "module": "preserve",
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noFallthroughCasesInSwitch": true,
+    "noImplicitOverride": true,
+    "noPropertyAccessFromIndexSignature": true,
+    "target": "ESNext",
+    "module": "ESNext",
     "moduleResolution": "bundler",
     "moduleDetection": "force",
-    "verbatimModuleSyntax": true,
-    "strict": true,
-    "noUnusedLocals": true,
-    "noImplicitOverride": true,
-    "noUncheckedIndexedAccess": true,
+    "esModuleInterop": true,
     "skipLibCheck": true,
-    "sourceMap": true,
     "noEmit": true,
     "plugins": [
       {
         "name": "@effect/language-service",
+        "diagnostics": true,
+        "diagnosticsName": true,
         "diagnosticSeverity": {
-          "effectFnOpportunity": "off"
-        }
+          "anyUnknownInErrorContext": "error",
+          "deterministicKeys": "off",
+          "importFromBarrel": "warning",
+          "instanceOfSchema": "warning",
+          "missedPipeableOpportunity": "suggestion",
+          "missingEffectServiceDependency": "warning",
+          "schemaUnionOfLiterals": "warning",
+          "strictBooleanExpressions": "off",
+          "strictEffectProvide": "off",
+          "catchAllToMapError": "warning",
+          "catchUnfailableEffect": "warning",
+          "effectFnOpportunity": "off",
+          "effectMapVoid": "warning",
+          "effectSucceedWithVoid": "warning",
+          "leakingRequirements": "warning",
+          "preferSchemaOverJson": "warning",
+          "redundantSchemaTagIdentifier": "warning",
+          "returnEffectInGen": "warning",
+          "runEffectInsideEffect": "error",
+          "schemaStructWithTag": "warning",
+          "schemaSyncInEffect": "warning",
+          "tryCatchInEffectGen": "warning",
+          "unnecessaryEffectGen": "warning",
+          "unnecessaryFailYieldableError": "warning",
+          "unnecessaryPipe": "warning",
+          "unnecessaryPipeChain": "warning",
+          "extendsNativeError": "error",
+          "nodeBuiltinImport": "off",
+          "serviceNotAsClass": "warning",
+          "outdatedApi": "warning"
+        },
+        "keyPatterns": [
+          {
+            "target": "service",
+            "pattern": "default",
+            "skipLeadingPath": ["src/"]
+          },
+          {
+            "target": "error",
+            "pattern": "default",
+            "skipLeadingPath": ["src/"]
+          }
+        ]
       }
     ]
   },
-  "include": ["src/**/*", "tests/**/*"]
+  "include": ["src", "tests"]
 }

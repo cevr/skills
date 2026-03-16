@@ -1,5 +1,4 @@
-import { Console, Effect, Option } from "effect"
-import { FileSystem, Path } from "effect"
+import { Console, Effect, FileSystem, Option, Path } from "effect"
 import { FetchError, NoSkillsFoundError, SkillNotFoundError } from "../lib/errors.js"
 import { walkDir } from "../lib/fs.js"
 import { DEFAULT_REF, SKILL_DIR_PREFIXES } from "../lib/constants.js"
@@ -98,7 +97,7 @@ const addFromLocal = Effect.fn("command.add.fromLocal")(function* (
 
   const inputPath = source.path.startsWith("~")
     ? pathService.join(
-        Option.getOrElse(Option.fromNullishOr(process.env.HOME), () => ""),
+        Option.getOrElse(Option.fromNullishOr(process.env["HOME"]), () => ""),
         source.path.slice(1),
       )
     : source.path
@@ -255,7 +254,9 @@ const addFromSearch = Effect.fn("command.add.fromSearch")(function* (query: stri
   const exactMatch = result.skills.find(
     (s) => s.skillId === query || s.name.toLowerCase() === query.toLowerCase(),
   )
-  const skill = exactMatch ?? result.skills[0]!
+  const first = result.skills[0]
+  if (!first) return yield* new NoSkillsFoundError({ message: `No skills found for "${query}"` })
+  const skill = exactMatch ?? first
 
   if (!exactMatch && result.skills.length > 1) {
     yield* Console.error(`${result.skills.length} results found, installing best match:`)

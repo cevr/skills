@@ -39,9 +39,9 @@ export const parseSource = (input: string): ParsedSource => {
   if (skillMatch) {
     return {
       _tag: "GitHubRepoWithSkill",
-      owner: skillMatch[1]!,
-      repo: skillMatch[2]!,
-      skillFilter: skillMatch[3]!,
+      owner: skillMatch[1] ?? "",
+      repo: skillMatch[2] ?? "",
+      skillFilter: skillMatch[3] ?? "",
     }
   }
 
@@ -52,16 +52,16 @@ export const parseSource = (input: string): ParsedSource => {
     if (treeBlobMatch) {
       return {
         _tag: "GitHubRepo",
-        owner: urlMatch[1]!,
-        repo: urlMatch[2]!,
+        owner: urlMatch[1] ?? "",
+        repo: urlMatch[2] ?? "",
         ref: treeBlobMatch[1],
         subpath: treeBlobMatch[2],
       }
     }
     return {
       _tag: "GitHubRepo",
-      owner: urlMatch[1]!,
-      repo: urlMatch[2]!,
+      owner: urlMatch[1] ?? "",
+      repo: urlMatch[2] ?? "",
     }
   }
 
@@ -69,8 +69,8 @@ export const parseSource = (input: string): ParsedSource => {
   if (repoMatch) {
     return {
       _tag: "GitHubRepo",
-      owner: repoMatch[1]!,
-      repo: repoMatch[2]!,
+      owner: repoMatch[1] ?? "",
+      repo: repoMatch[2] ?? "",
       ref: repoMatch[3],
       subpath: repoMatch[4],
     }

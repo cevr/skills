@@ -1,5 +1,4 @@
-import { Console, Effect, Option } from "effect"
-import { FileSystem } from "effect"
+import { Console, Effect, FileSystem, Option } from "effect"
 import { SkillStore } from "../services/SkillStore.js"
 import { GitHub } from "../services/GitHub.js"
 import { SkillLock, type LockEntry } from "../services/SkillLock.js"
@@ -51,16 +50,23 @@ const updateLocalSkill = Effect.fn("command.update.updateLocalSkill")(function* 
   localPath: string,
 ) {
   const store = yield* SkillStore
+  const lock = yield* SkillLock
   const fs = yield* FileSystem.FileSystem
 
   const exists = yield* fs.exists(localPath).pipe(Effect.orDie)
   if (!exists) {
-    yield* Console.error(`  Skipping ${name}: local path no longer exists "${localPath}"`)
-    return "error" as const
+    yield* store.remove(name).pipe(Effect.catchTag("SkillNotFoundError", () => Effect.void))
+    yield* lock.remove(name)
+    return "removed" as const
   }
 
-  // P6: Parallel fetch+read
-  const [incoming, installed] = yield* Effect.all([walkDir(localPath), store.readDir(name)])
+  // P6: Parallel fetch+read (installed dir may not exist yet)
+  const [incoming, installed] = yield* Effect.all([
+    walkDir(localPath),
+    store
+      .readDir(name)
+      .pipe(Effect.catchDefect(() => Effect.succeed([] as ReadonlyArray<FileEntry>))),
+  ])
 
   if (filesEqual(incoming, installed)) return "unchanged" as const
 
@@ -84,7 +90,7 @@ const updateSkill = Effect.fn("command.update.updateSkill")(function* (
   const source = resolveRepoSource(entry)
   if (Option.isNone(source)) {
     yield* Console.error(`  Skipping ${name}: invalid source "${entry.source}"`)
-    return "error"
+    return "failed" as const
   }
 
   const { owner, repo, ref } = source.value
@@ -99,20 +105,22 @@ const updateSkill = Effect.fn("command.update.updateSkill")(function* (
       ),
       Effect.map((v) => (Option.isOption(v) ? v : Option.some(v))),
     ),
-    store.readDir(name),
+    store
+      .readDir(name)
+      .pipe(Effect.catchDefect(() => Effect.succeed([] as ReadonlyArray<FileEntry>))),
   ])
 
   const [incomingOpt, installed] = result
 
-  if (Option.isNone(incomingOpt)) return "error"
+  if (Option.isNone(incomingOpt)) return "failed" as const
 
   const incoming = incomingOpt.value
 
-  if (filesEqual(incoming, installed)) return "unchanged"
+  if (filesEqual(incoming, installed)) return "unchanged" as const
 
   yield* store.syncDir(name, incoming)
 
-  return "updated"
+  return "updated" as const
 })
 
 // P1: Parallel update loop + batched lock writes
@@ -135,7 +143,9 @@ export const runUpdate = Effect.fn("command.update")(function* () {
   )
 
   const updatedNames: Array<string> = []
+  const removedNames: Array<string> = []
   let unchanged = 0
+  let failed = 0
 
   for (const { name, status } of results) {
     switch (status) {
@@ -143,22 +153,33 @@ export const runUpdate = Effect.fn("command.update")(function* () {
         yield* Console.log(`  Updated: ${name}`)
         updatedNames.push(name)
         break
+      case "removed":
+        yield* Console.log(`  Removed: ${name} (source no longer exists)`)
+        removedNames.push(name)
+        break
       case "unchanged":
         unchanged++
         break
-      case "error":
+      case "failed":
+        failed++
         break
     }
   }
 
-  // Batch lock writes
+  // Batch lock writes (removed entries already cleaned their own lock)
   if (updatedNames.length > 0) {
     yield* lock.updateMany(updatedNames)
   }
 
-  if (updatedNames.length === 0) {
+  const parts: Array<string> = []
+  if (updatedNames.length > 0) parts.push(`${updatedNames.length} updated`)
+  if (unchanged > 0) parts.push(`${unchanged} unchanged`)
+  if (removedNames.length > 0) parts.push(`${removedNames.length} removed`)
+  if (failed > 0) parts.push(`${failed} failed`)
+
+  if (updatedNames.length === 0 && removedNames.length === 0 && failed === 0) {
     yield* Console.log("All skills up to date.")
   } else {
-    yield* Console.log(`\n${updatedNames.length} updated, ${unchanged} unchanged.`)
+    yield* Console.log(`\n${parts.join(", ")}.`)
   }
 })
