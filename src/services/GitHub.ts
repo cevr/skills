@@ -120,7 +120,23 @@ const discoverFromTree = (
     if (skills.length > 0) return skills
   }
 
-  // Check root SKILL.md
+  // Check root-level children (e.g. grill-me/SKILL.md at repo root)
+  const rootPattern = /^([^/]+)\/SKILL\.md$/
+  for (const entry of tree) {
+    if (entry.type !== "blob") continue
+    const match = entry.path.match(rootPattern)
+    const dirName = match?.[1]
+    if (dirName) {
+      skills.push({
+        dirName,
+        skillMdPath: entry.path,
+        skillDir: dirName,
+      })
+    }
+  }
+  if (skills.length > 0) return skills
+
+  // Check root SKILL.md (repo itself is a single skill)
   if (tree.some((e) => e.type === "blob" && e.path === "SKILL.md")) {
     return [{ dirName: "", skillMdPath: "SKILL.md", skillDir: "" }]
   }
@@ -169,10 +185,40 @@ const discoverFromListing = Effect.fn("GitHub.discoverFromListing")(function* (
     if (skills.length > 0) return skills
   }
 
-  // Check root
+  // Check root-level children (e.g. grill-me/SKILL.md at repo root)
   const rootEntries = yield* listContents(owner, repo, "", ref).pipe(
     Effect.catchTag("FetchError", () => Effect.succeed([] as ReadonlyArray<GitHubContentEntry>)),
   )
+
+  const rootDirs = rootEntries.filter((entry) => entry.type === "dir")
+  if (rootDirs.length > 0) {
+    const rootResults = yield* Effect.forEach(
+      rootDirs,
+      (dir) =>
+        listContents(owner, repo, dir.path, ref).pipe(
+          Effect.catchTag("FetchError", () =>
+            Effect.succeed([] as ReadonlyArray<GitHubContentEntry>),
+          ),
+          Effect.map((children): ReadonlyArray<SkillEntry> => {
+            if (children.some((child) => child.name === "SKILL.md")) {
+              return [
+                {
+                  dirName: dir.name,
+                  skillMdPath: `${dir.path}/SKILL.md`,
+                  skillDir: dir.path,
+                },
+              ]
+            }
+            return []
+          }),
+        ),
+      { concurrency: "unbounded" },
+    )
+    const rootSkills = rootResults.flat()
+    if (rootSkills.length > 0) return rootSkills
+  }
+
+  // Check root SKILL.md (repo itself is a single skill)
   if (rootEntries.some((entry) => entry.name === "SKILL.md")) {
     return [{ dirName: repo, skillMdPath: "SKILL.md", skillDir: "" }]
   }

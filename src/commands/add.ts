@@ -199,18 +199,18 @@ const addFromRepoWithSkill = Effect.fn("command.add.fromRepoWithSkill")(function
   const gh = yield* GitHub
   const sourceStr = `${owner}/${repo}@${skillFilter}`
 
-  for (const prefix of SKILL_DIR_PREFIXES) {
-    const directPath = `${prefix}/${skillFilter}/SKILL.md`
+  // Probe prefixed paths (skills/X, skill/X) then root-level (X)
+  const probePaths = [
+    ...SKILL_DIR_PREFIXES.map((prefix) => `${prefix}/${skillFilter}`),
+    skillFilter,
+  ]
+
+  for (const skillDir of probePaths) {
+    const directPath = `${skillDir}/SKILL.md`
     const direct = yield* gh.fetchRaw(owner, repo, directPath).pipe(Effect.option)
 
     if (direct._tag === "Some") {
-      const result = yield* installSkillDir(
-        owner,
-        repo,
-        `${prefix}/${skillFilter}`,
-        undefined,
-        sourceStr,
-      )
+      const result = yield* installSkillDir(owner, repo, skillDir, undefined, sourceStr)
       yield* lock.add(result.name, result.source, result.skillPath, result.ref)
       return
     }
