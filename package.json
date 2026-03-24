@@ -1,6 +1,6 @@
 {
   "name": "@cvr/skills",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "CLI to fetch and manage AI agent skills from the Vercel skills ecosystem",
   "repository": {
     "type": "git",
